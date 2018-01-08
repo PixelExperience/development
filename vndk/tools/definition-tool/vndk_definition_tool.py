@@ -9,6 +9,7 @@ import csv
 import itertools
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -700,17 +701,27 @@ class TaggedDict(object):
         self._path_tag = dict()
         for tag in self.TAGS:
             setattr(self, tag, set())
+        self._regex_patterns = []
 
     def add(self, tag, lib):
         lib_set = getattr(self, tag)
         lib_set.add(lib)
         self._path_tag[lib] = tag
 
+    def add_regex(self, tag, pattern):
+        self._regex_patterns.append((re.compile(pattern), tag))
+
     def get_path_tag(self, lib):
         try:
             return self._path_tag[lib]
         except KeyError:
-            return self.get_path_tag_default(lib)
+            pass
+
+        for pattern, tag in self._regex_patterns:
+            if pattern.match(lib):
+                return tag
+
+        return self.get_path_tag_default(lib)
 
     def get_path_tag_default(self, lib):
         raise NotImplementedError()
@@ -749,6 +760,10 @@ class TaggedDict(object):
     @staticmethod
     def is_fwk_only_rs(tag_bit):
         return bool(tag_bit & TaggedDict.FWK_ONLY_RS)
+
+    @staticmethod
+    def is_sp_hal(tag_bit):
+        return bool(tag_bit & TaggedDict.SP_HAL)
 
 
 class TaggedPathDict(TaggedDict):
@@ -793,6 +808,9 @@ class TaggedPathDict(TaggedDict):
             yield pattern
 
     def add(self, tag, path):
+        if path.startswith('[regex]'):
+            super(TaggedPathDict, self).add_regex(tag, path[7:])
+            return
         for path in self._enumerate_paths(path):
             super(TaggedPathDict, self).add(tag, path)
 
@@ -800,7 +818,17 @@ class TaggedPathDict(TaggedDict):
         return 'vnd_only' if path.startswith('/vendor') else 'fwk_only'
 
 
-class TaggedLibDict(TaggedDict):
+class TaggedLibDict(object):
+    def __init__(self):
+        self._path_tag = dict()
+        for tag in TaggedDict.TAGS:
+            setattr(self, tag, set())
+
+    def add(self, tag, lib):
+        lib_set = getattr(self, tag)
+        lib_set.add(lib)
+        self._path_tag[lib] = tag
+
     @staticmethod
     def create_from_graph(graph, tagged_paths, generic_refs=None):
         d = TaggedLibDict()
@@ -817,6 +845,12 @@ class TaggedLibDict(TaggedDict):
             else:
                 d.add('vnd_only', lib)
         return d
+
+    def get_path_tag(self, lib):
+        try:
+            return self._path_tag[lib]
+        except KeyError:
+            return self.get_path_tag_default(lib)
 
     def get_path_tag_default(self, lib):
         return 'vnd_only' if lib.path.startswith('/vendor') else 'fwk_only'
@@ -868,6 +902,237 @@ SPLibResult = collections.namedtuple(
         'vndk_sp_both')
 
 
+VNDKLibTuple = defaultnamedtuple('VNDKLibTuple', 'vndk_sp vndk', [])
+
+
+class VNDKLibDir(list):
+    """VNDKLibDir is a dict which maps version to VNDK-SP and VNDK directory
+    paths."""
+
+
+    @classmethod
+    def create_vndk_sp_dir_name(cls, version):
+        """Create VNDK-SP directory name from a given version."""
+        return 'vndk-sp' if version == 'current' else 'vndk-sp-' + version
+
+
+    @classmethod
+    def create_vndk_dir_name(cls, version):
+        """Create VNDK directory name from a given version."""
+        return 'vndk' if version == 'current' else 'vndk-' + version
+
+
+    @classmethod
+    def extract_version_from_name(cls, name):
+        """Extract VNDK version from a name."""
+        if name in {'vndk', 'vndk-sp'}:
+            return 'current'
+        elif name.startswith('vndk-sp-'):
+            return name[len('vndk-sp-'):]
+        elif name.startswith('vndk-'):
+            return name[len('vndk-'):]
+        else:
+            return None
+
+
+    @classmethod
+    def extract_path_component(cls, path, index):
+        """Extract n-th path component from a posix path."""
+        start = 0
+        for i in range(index):
+            pos = path.find('/', start)
+            if pos == -1:
+                return None
+            start = pos + 1
+        end = path.find('/', start)
+        if end == -1:
+            return None
+        return path[start:end]
+
+
+    @classmethod
+    def extract_version_from_path(cls, path):
+        """Extract VNDK version from the third path component."""
+        component = cls.extract_path_component(path, 3)
+        if not component:
+            return None
+        return cls.extract_version_from_name(component)
+
+
+    @classmethod
+    def is_in_vndk_dir(cls, path):
+        """Determine whether a path is under a VNDK directory."""
+        component = cls.extract_path_component(path, 3)
+        if not component:
+            return False
+        return (component == 'vndk' or
+                (component.startswith('vndk-') and
+                    not component == 'vndk-sp' and
+                    not component.startswith('vndk-sp-')))
+
+
+    @classmethod
+    def is_in_vndk_sp_dir(cls, path):
+        """Determine whether a path is under a VNDK-SP directory."""
+        component = cls.extract_path_component(path, 3)
+        if not component:
+            return False
+        return component == 'vndk-sp' or component.startswith('vndk-sp-')
+
+
+    @classmethod
+    def create_vndk_search_paths(cls, lib_dir, version):
+        """Create VNDK/VNDK-SP search paths from lib_dir and version."""
+        vndk_sp_name = cls.create_vndk_sp_dir_name(version)
+        vndk_name = cls.create_vndk_dir_name(version)
+        return VNDKLibTuple(
+                [posixpath.join('/vendor', lib_dir, vndk_sp_name),
+                 posixpath.join('/system', lib_dir, vndk_sp_name)],
+                [posixpath.join('/vendor', lib_dir, vndk_name),
+                 posixpath.join('/system', lib_dir, vndk_name)])
+
+
+    @classmethod
+    def create_default(cls):
+        """Create default VNDK-SP and VNDK paths without versions."""
+        vndk_lib_dirs = VNDKLibDir()
+        vndk_lib_dirs.append('current')
+        return vndk_lib_dirs
+
+
+    @classmethod
+    def create_from_version(cls, version):
+        """Create default VNDK-SP and VNDK paths with the specified version."""
+        vndk_lib_dirs = VNDKLibDir()
+        vndk_lib_dirs.append(version)
+        return vndk_lib_dirs
+
+
+    @classmethod
+    def create_from_dirs(cls, system_dirs, vendor_dirs):
+        """Scan system_dirs and vendor_dirs and collect all VNDK-SP and VNDK
+        directory paths."""
+
+        def collect_versions(base_dirs):
+            versions = set()
+            for base_dir in base_dirs:
+                for lib_dir in ('lib', 'lib64'):
+                    lib_dir_path = os.path.join(base_dir, lib_dir)
+                    try:
+                        for name in os.listdir(lib_dir_path):
+                            version = cls.extract_version_from_name(name)
+                            if version:
+                                versions.add(version)
+                    except FileNotFoundError:
+                        pass
+            return versions
+
+        versions = set()
+        if system_dirs:
+            versions.update(collect_versions(system_dirs))
+        if vendor_dirs:
+            versions.update(collect_versions(vendor_dirs))
+
+        # Sanity check: Versions must not be 'sp' or start with 'sp-'.
+        bad_versions = [version for version in versions
+                        if version == 'sp' or version.startswith('sp-')]
+        if bad_versions:
+            raise ValueError('bad vndk version: ' + repr(bad_versions))
+
+        return VNDKLibDir(cls.sorted_version(versions))
+
+
+    def classify_vndk_libs(self, libs):
+        """Classify VNDK/VNDK-SP shared libraries."""
+        vndk_sp_libs = collections.defaultdict(set)
+        vndk_libs = collections.defaultdict(set)
+        other_libs = set()
+
+        for lib in libs:
+            component = self.extract_path_component(lib.path, 3)
+            if component is None:
+                other_libs.add(lib)
+                continue
+
+            version = self.extract_version_from_name(component)
+            if version is None:
+                other_libs.add(lib)
+                continue
+
+            if component.startswith('vndk-sp'):
+                vndk_sp_libs[version].add(lib)
+            else:
+                vndk_libs[version].add(lib)
+
+        return (vndk_sp_libs, vndk_libs, other_libs)
+
+
+    @classmethod
+    def _get_property(cls, property_file, name):
+        """Read a property from a property file."""
+        for line in property_file:
+            if line.startswith(name + '='):
+                return line[len(name) + 1:].strip()
+        return None
+
+
+    @classmethod
+    def get_ro_vndk_version(cls, vendor_dirs):
+        """Read ro.vendor.version property from vendor partitions."""
+        for vendor_dir in vendor_dirs:
+            path = os.path.join(vendor_dir, 'default.prop')
+            with open(path, 'r') as property_file:
+                result = cls._get_property(property_file, 'ro.vndk.version')
+                if result is not None:
+                    return result
+        return None
+
+
+    @classmethod
+    def sorted_version(cls, versions):
+        """Sort versions in the following rule:
+
+        1. 'current' is the first.
+
+        2. The versions that cannot be converted to int are sorted
+           lexicographically in descendant order.
+
+        3. The versions that can be converted to int are sorted as integers in
+           descendant order.
+        """
+
+        current = []
+        alpha = []
+        numeric = []
+
+        for version in versions:
+            if version == 'current':
+                current.append(version)
+                continue
+            try:
+                numeric.append(int(version))
+            except ValueError:
+                alpha.append(version)
+
+        alpha.sort(reverse=True)
+        numeric.sort(reverse=True)
+
+        return current + alpha + [str(x) for x in numeric]
+
+
+    def find_vendor_vndk_version(self, vendor_dirs):
+        """Find the best-fitting VNDK version."""
+
+        ro_vndk_version = self.get_ro_vndk_version(vendor_dirs)
+        if ro_vndk_version is not None:
+            return ro_vndk_version
+
+        if not self:
+            return 'current'
+
+        return self.sorted_version(self)[0]
+
+
 class ELFResolver(object):
     def __init__(self, lib_set, default_search_path):
         self.lib_set = lib_set
@@ -893,15 +1158,18 @@ class ELFResolver(object):
 
 
 class ELFLinkData(object):
-    NEEDED = 0  # Dependencies recorded in DT_NEEDED entries.
-    DLOPEN = 1  # Dependencies introduced by dlopen().
-
     def __init__(self, partition, path, elf, tag_bit):
         self.partition = partition
         self.path = path
         self.elf = elf
-        self._deps = (set(), set())
-        self._users = (set(), set())
+        self.deps_needed = set()
+        self.deps_needed_hidden = set()
+        self.deps_dlopen = set()
+        self.deps_dlopen_hidden = set()
+        self.users_needed = set()
+        self.users_needed_hidden = set()
+        self.users_dlopen = set()
+        self.users_dlopen_hidden = set()
         self.imported_ext_symbols = collections.defaultdict(set)
         self._tag_bit = tag_bit
         self.unresolved_symbols = set()
@@ -936,67 +1204,89 @@ class ELFLinkData(object):
     def is_fwk_only_rs(self):
         return TaggedDict.is_fwk_only_rs(self._tag_bit)
 
-    def add_dep(self, dst, ty):
-        self._deps[ty].add(dst)
-        dst._users[ty].add(self)
+    @property
+    def is_sp_hal(self):
+        return TaggedDict.is_sp_hal(self._tag_bit)
 
-    def remove_dep(self, dst, ty):
-        self._deps[ty].remove(dst)
-        dst._users[ty].remove(self)
+    def add_needed_dep(self, dst):
+        assert dst not in self.deps_needed_hidden
+        assert self not in dst.users_needed_hidden
+        self.deps_needed.add(dst)
+        dst.users_needed.add(self)
+
+    def add_dlopen_dep(self, dst):
+        assert dst not in self.deps_dlopen_hidden
+        assert self not in dst.users_dlopen_hidden
+        self.deps_dlopen.add(dst)
+        dst.users_dlopen.add(self)
+
+    def hide_needed_dep(self, dst):
+        self.deps_needed.remove(dst)
+        dst.users_needed.remove(self)
+        self.deps_needed_hidden.add(dst)
+        dst.users_needed_hidden.add(self)
+
+    def hide_dlopen_dep(self, dst):
+        self.deps_dlopen.remove(dst)
+        dst.users_dlopen.remove(self)
+        self.deps_dlopen_hidden.add(dst)
+        dst.users_dlopen_hidden.add(self)
 
     @property
     def num_deps(self):
         """Get the number of dependencies.  If a library is linked by both
         NEEDED and DLOPEN relationship, then it will be counted twice."""
-        return sum(len(deps) for deps in self._deps)
+        return (len(self.deps_needed) + len(self.deps_needed_hidden) +
+                len(self.deps_dlopen) + len(self.deps_dlopen_hidden))
 
     @property
-    def deps(self):
-        return itertools.chain.from_iterable(self._deps)
+    def deps_all(self):
+        return itertools.chain(self.deps_needed, self.deps_needed_hidden,
+                               self.deps_dlopen, self.deps_dlopen_hidden)
 
     @property
-    def deps_with_type(self):
-        dt_deps = zip(self._deps[self.NEEDED], itertools.repeat(self.NEEDED))
-        dl_deps = zip(self._deps[self.DLOPEN], itertools.repeat(self.DLOPEN))
-        return itertools.chain(dt_deps, dl_deps)
+    def deps_good(self):
+        return itertools.chain(self.deps_needed, self.deps_dlopen)
 
     @property
-    def dt_deps(self):
-        return self._deps[self.NEEDED]
+    def deps_needed_all(self):
+        return itertools.chain(self.deps_needed, self.deps_needed_hidden)
 
     @property
-    def dl_deps(self):
-        return self._deps[self.DLOPEN]
+    def deps_dlopen_all(self):
+        return itertools.chain(self.deps_dlopen, self.deps_dlopen_hidden)
 
     @property
     def num_users(self):
         """Get the number of users.  If a library is linked by both NEEDED and
         DLOPEN relationship, then it will be counted twice."""
-        return sum(len(users) for users in self._users)
+        return (len(self.users_needed) + len(self.users_needed_hidden) +
+                len(self.users_dlopen) + len(self.users_dlopen_hidden))
 
     @property
-    def users(self):
-        return itertools.chain.from_iterable(self._users)
+    def users_all(self):
+        return itertools.chain(self.users_needed, self.users_needed_hidden,
+                               self.users_dlopen, self.users_dlopen_hidden)
 
     @property
-    def users_with_type(self):
-        dt_users = zip(self._users[self.NEEDED], itertools.repeat(self.NEEDED))
-        dl_users = zip(self._users[self.DLOPEN], itertools.repeat(self.DLOPEN))
-        return itertools.chain(dt_users, dl_users)
+    def users_good(self):
+        return itertools.chain(self.users_needed, self.users_dlopen)
 
     @property
-    def dt_users(self):
-        return self._users[self.NEEDED]
+    def users_needed_all(self):
+        return itertools.chain(self.users_needed, self.users_needed_hidden)
 
     @property
-    def dl_users(self):
-        return self._users[self.DLOPEN]
+    def users_dlopen_all(self):
+        return itertools.chain(self.users_dlopen, self.users_dlopen_hidden)
 
     def has_dep(self, dst):
-        return any(dst in deps for deps in self._deps)
+        return (dst in self.deps_needed or dst in self.deps_needed_hidden or
+                dst in self.deps_dlopen or dst in self.deps_dlopen_hidden)
 
     def has_user(self, dst):
-        return any(dst in users for users in self._users)
+        return (dst in self.users_needed or dst in self.users_needed_hidden or
+                dst in self.users_dlopen or dst in self.users_dlopen_hidden)
 
     def is_system_lib(self):
         return self.partition == PT_SYSTEM
@@ -1062,16 +1352,25 @@ class ELFLibDict(defaultnamedtuple('ELFLibDict', ('lib32', 'lib64'), {})):
 
 
 class ELFLinker(object):
-    def __init__(self, tagged_paths=None):
+    def __init__(self, tagged_paths=None, vndk_lib_dirs=None,
+                 ro_vndk_version='current'):
         self.lib_pt = [ELFLibDict() for i in range(NUM_PARTITIONS)]
 
         if tagged_paths is None:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             dataset_path = os.path.join(
                     script_dir, 'datasets', 'minimum_tag_file.csv')
-            tagged_paths = TaggedPathDict.create_from_csv_path(dataset_path)
+            self.tagged_paths = \
+                    TaggedPathDict.create_from_csv_path(dataset_path)
+        else:
+            self.tagged_paths = tagged_paths
 
-        self.tagged_paths = tagged_paths
+        if vndk_lib_dirs is None:
+            self.vndk_lib_dirs = VNDKLibDir.create_default()
+        else:
+            self.vndk_lib_dirs = vndk_lib_dirs
+
+        self.ro_vndk_version = ro_vndk_version
 
     def _add_lib_to_lookup_dict(self, lib):
         self.lib_pt[lib.partition].add(lib.path, lib)
@@ -1085,28 +1384,37 @@ class ELFLinker(object):
         self._add_lib_to_lookup_dict(lib)
         return lib
 
-    def rename_lib(self, lib, new_partition, new_path):
-        self._remove_lib_from_lookup_dict(lib)
-        lib.path = new_path
-        lib.partition = new_partition
-        self._add_lib_to_lookup_dict(lib)
-
-    def add_dep(self, src_path, dst_path, ty):
+    def add_dlopen_dep(self, src_path, dst_path):
+        num_matches = 0
         for elf_class in (ELF.ELFCLASS32, ELF.ELFCLASS64):
-            src = self.get_lib_in_elf_class(elf_class, src_path)
-            dst = self.get_lib_in_elf_class(elf_class, dst_path)
-            if src and dst:
-                src.add_dep(dst, ty)
-                return
-        print('error: cannot add dependency from {} to {}.'
-              .format(src_path, dst_path), file=sys.stderr)
+            srcs = self._get_libs_in_elf_class(elf_class, src_path)
+            dsts = self._get_libs_in_elf_class(elf_class, dst_path)
+            for src, dst in itertools.product(srcs, dsts):
+                src.add_dlopen_dep(dst)
+                num_matches += 1
+        if num_matches == 0:
+            print('error: Failed to add dlopen dependency from {} to {}.'
+                  .format(src_path, dst_path), file=sys.stderr)
 
-    def get_lib_in_elf_class(self, elf_class, path, default=None):
-        for partition in range(NUM_PARTITIONS):
-            res = self.lib_pt[partition].get_lib_dict(elf_class).get(path)
-            if res:
-                return res
-        return default
+    def _get_libs_in_elf_class(self, elf_class, path):
+        result = set()
+        if '${LIB}' in path:
+            lib_dir = 'lib' if elf_class == ELF.ELFCLASS32 else 'lib64'
+            path = path.replace('${LIB}', lib_dir)
+        if path.startswith('[regex]'):
+            patt = re.compile(path[7:])
+            for partition in range(NUM_PARTITIONS):
+                lib_set = self.lib_pt[partition].get_lib_dict(elf_class)
+                for path ,lib in lib_set.items():
+                    if patt.match(path):
+                        result.add(lib)
+        else:
+            for partition in range(NUM_PARTITIONS):
+                lib_set = self.lib_pt[partition].get_lib_dict(elf_class)
+                lib = lib_set.get(path)
+                if lib:
+                    result.add(lib)
+        return result
 
     def get_lib(self, path):
         for lib_set in self.lib_pt:
@@ -1170,14 +1478,13 @@ class ELFLinker(object):
             else:
                 self.add_lib(partition, short_path, elf)
 
-    def load_extra_deps(self, path):
+    def add_dlopen_deps(self, path):
         patt = re.compile('([^:]*):\\s*(.*)')
         with open(path, 'r') as f:
             for line in f:
                 match = patt.match(line)
                 if match:
-                    self.add_dep(match.group(1), match.group(2),
-                                 ELFLinkData.DLOPEN)
+                    self.add_dlopen_dep(match.group(1), match.group(2))
 
     def _find_exported_symbol(self, symbol, libs):
         """Find the shared library with the exported symbol."""
@@ -1211,7 +1518,7 @@ class ELFLinker(object):
                       .format(lib.path, dt_needed, candidates), file=sys.stderr)
                 lib.unresolved_dt_needed.append(dt_needed)
                 continue
-            lib.add_dep(dep, ELFLinkData.NEEDED)
+            lib.add_needed_dep(dep)
             imported_libs.append(dep)
         return imported_libs
 
@@ -1234,150 +1541,117 @@ class ELFLinker(object):
         for lib in lib_set:
             self._resolve_lib_deps(lib, resolver, generic_refs)
 
-    SYSTEM_SEARCH_PATH = (
-        '/system/${LIB}',
-        '/vendor/${LIB}',
-    )
 
-    VENDOR_SEARCH_PATH = (
-        '/vendor/${LIB}/hw',
-        '/vendor/${LIB}/egl',
-        '/vendor/${LIB}',
-        '/vendor/${LIB}/vndk-sp',
-        '/system/${LIB}/vndk-sp',
-        '/vendor/${LIB}/vndk',
-        '/system/${LIB}/vndk',
-        '/system/${LIB}',  # For degenerated VNDK libs.
-    )
+    def _get_system_search_paths(self, lib_dir):
+        return [
+            '/system/' + lib_dir,
+            # To find violating dependencies to vendor partitions.
+            '/vendor/' + lib_dir,
+        ]
 
-    VNDK_SP_SEARCH_PATH = (
-        '/vendor/${LIB}/vndk-sp',
-        '/system/${LIB}/vndk-sp',
-        '/vendor/${LIB}',  # To discover missing VNDK-SP dependencies.
-        '/system/${LIB}',  # To discover missing VNDK-SP dependencies or LL-NDK.
-    )
-
-    VNDK_SEARCH_PATH = (
-        '/vendor/${LIB}/vndk-sp',
-        '/system/${LIB}/vndk-sp',
-        '/vendor/${LIB}/vndk',
-        '/system/${LIB}/vndk',
-        '/system/${LIB}',  # To discover missing VNDK dependencies or LL-NDK.
-    )
+    def _get_vendor_search_paths(self, lib_dir, vndk_sp_dirs, vndk_dirs):
+        vendor_lib_dirs = [
+            '/vendor/' + lib_dir + '/hw',
+            '/vendor/' + lib_dir + '/egl',
+            '/vendor/' + lib_dir,
+        ]
+        system_lib_dirs = [
+            # For degenerated VNDK libs.
+            '/system/' + lib_dir,
+        ]
+        return vendor_lib_dirs + vndk_sp_dirs + vndk_dirs + system_lib_dirs
 
 
-    @staticmethod
-    def _subst_search_path(search_path, elf_class):
-        lib_dir_name = 'lib' if elf_class == ELF.ELFCLASS32 else 'lib64'
-        return [path.replace('${LIB}', lib_dir_name) for path in search_path]
+    def _get_vndk_sp_search_paths(self, lib_dir, vndk_sp_dirs):
+        fallback_lib_dirs = [
+            # To find missing VNDK-SP dependencies.
+            '/vendor/' + lib_dir,
+            # To find missing VNDK-SP dependencies or LL-NDK.
+            '/system/' + lib_dir,
+        ]
+        return vndk_sp_dirs + fallback_lib_dirs
 
-    @classmethod
-    def _get_dirname(cls, path):
-        return os.path.basename(os.path.dirname(path))
 
-    @classmethod
-    def _is_in_vndk_dir(cls, path):
-        return cls._get_dirname(path) == 'vndk'
+    def _get_vndk_search_paths(self, lib_dir, vndk_sp_dirs, vndk_dirs):
+        fallback_lib_dirs = [
+            # To find missing VNDK dependencies or LL-NDK.
+            '/system/' + lib_dir,
+        ]
+        return vndk_sp_dirs + vndk_dirs + fallback_lib_dirs
 
-    @classmethod
-    def _is_in_vndk_sp_dir(cls, path):
-        return cls._get_dirname(path) == 'vndk-sp'
 
-    @classmethod
-    def _classify_vndk_libs(cls, libs):
-        vndk_libs = set()
-        vndk_sp_libs = set()
-        other_libs = set()
-        for lib in libs:
-            dirname = cls._get_dirname(lib.path)
-            if dirname == 'vndk':
-                vndk_libs.add(lib)
-            elif dirname == 'vndk-sp':
-                vndk_sp_libs.add(lib)
-            else:
-                other_libs.add(lib)
-        return (vndk_libs, vndk_sp_libs, other_libs)
-
-    def _resolve_elf_class_deps(self, elf_class, generic_refs):
+    def _resolve_elf_class_deps(self, lib_dir, elf_class, generic_refs):
         # Classify libs.
+        vndk_lib_dirs = self.vndk_lib_dirs
         lib_dict = self._compute_lib_dict(elf_class)
+
         system_lib_dict = self.lib_pt[PT_SYSTEM].get_lib_dict(elf_class)
-        system_vndk_libs, system_vndk_sp_libs, system_libs = \
-                self._classify_vndk_libs(system_lib_dict.values())
+        system_vndk_sp_libs, system_vndk_libs, system_libs = \
+                vndk_lib_dirs.classify_vndk_libs(system_lib_dict.values())
 
         vendor_lib_dict = self.lib_pt[PT_VENDOR].get_lib_dict(elf_class)
-        vendor_vndk_libs, vendor_vndk_sp_libs, vendor_libs = \
-                self._classify_vndk_libs(vendor_lib_dict.values())
-
-        vndk_libs = system_vndk_libs | vendor_vndk_libs
-        vndk_sp_libs = system_vndk_sp_libs | vendor_vndk_sp_libs
+        vendor_vndk_sp_libs, vendor_vndk_libs, vendor_libs = \
+                vndk_lib_dirs.classify_vndk_libs(vendor_lib_dict.values())
 
         # Resolve system libs.
-        search_path = self._subst_search_path(
-                self.SYSTEM_SEARCH_PATH, elf_class)
-        resolver = ELFResolver(lib_dict, search_path)
+        search_paths = self._get_system_search_paths(lib_dir)
+        resolver = ELFResolver(lib_dict, search_paths)
         self._resolve_lib_set_deps(system_libs, resolver, generic_refs)
 
         # Resolve vndk-sp libs
-        search_path = self._subst_search_path(
-                self.VNDK_SP_SEARCH_PATH, elf_class)
-        resolver = ELFResolver(lib_dict, search_path)
-        self._resolve_lib_set_deps(vndk_sp_libs, resolver, generic_refs)
+        for version in vndk_lib_dirs:
+            vndk_sp_dirs, vndk_dirs = \
+                    vndk_lib_dirs.create_vndk_search_paths(lib_dir, version)
+            vndk_sp_libs = system_vndk_sp_libs[version] | \
+                           vendor_vndk_sp_libs[version]
+            search_paths = self._get_vndk_sp_search_paths(lib_dir, vndk_sp_dirs)
+            resolver = ELFResolver(lib_dict, search_paths)
+            self._resolve_lib_set_deps(vndk_sp_libs, resolver, generic_refs)
 
         # Resolve vndk libs
-        search_path = self._subst_search_path(self.VNDK_SEARCH_PATH, elf_class)
-        resolver = ELFResolver(lib_dict, search_path)
-        self._resolve_lib_set_deps(vndk_libs, resolver, generic_refs)
+        for version in vndk_lib_dirs:
+            vndk_sp_dirs, vndk_dirs = \
+                    vndk_lib_dirs.create_vndk_search_paths(lib_dir, version)
+            vndk_libs = system_vndk_libs[version] | vendor_vndk_libs[version]
+            search_paths = self._get_vndk_search_paths(
+                    lib_dir, vndk_sp_dirs, vndk_dirs)
+            resolver = ELFResolver(lib_dict, search_paths)
+            self._resolve_lib_set_deps(vndk_libs, resolver, generic_refs)
 
         # Resolve vendor libs.
-        search_path = self._subst_search_path(
-                self.VENDOR_SEARCH_PATH, elf_class)
-        resolver = ELFResolver(lib_dict, search_path)
+        vndk_sp_dirs, vndk_dirs = vndk_lib_dirs.create_vndk_search_paths(
+                lib_dir, self.ro_vndk_version)
+        search_paths = self._get_vendor_search_paths(
+                lib_dir, vndk_sp_dirs, vndk_dirs)
+        resolver = ELFResolver(lib_dict, search_paths)
         self._resolve_lib_set_deps(vendor_libs, resolver, generic_refs)
 
-    def resolve_deps(self, generic_refs=None):
-        self._resolve_elf_class_deps(ELF.ELFCLASS32, generic_refs)
-        self._resolve_elf_class_deps(ELF.ELFCLASS64, generic_refs)
 
-    def compute_path_matched_lib(self, path_patterns):
-        patt = re.compile('|'.join('(?:' + p + ')' for p in path_patterns))
-        return set(lib for lib in self.all_libs() if patt.match(lib.path))
+    def resolve_deps(self, generic_refs=None):
+        self._resolve_elf_class_deps('lib', ELF.ELFCLASS32, generic_refs)
+        self._resolve_elf_class_deps('lib64', ELF.ELFCLASS64, generic_refs)
+
 
     def compute_predefined_sp_hal(self):
         """Find all same-process HALs."""
-        path_patterns = (
-            # OpenGL-related
-            '^/vendor/.*/libEGL_.*\\.so$',
-            '^/vendor/.*/libGLES_.*\\.so$',
-            '^/vendor/.*/libGLESv1_CM_.*\\.so$',
-            '^/vendor/.*/libGLESv2_.*\\.so$',
-            '^/vendor/.*/libGLESv3_.*\\.so$',
-            # Vulkan
-            '^/vendor/.*/vulkan.*\\.so$',
-            # libRSDriver
-            '^.*/android\\.hardware\\.renderscript@1\\.0-impl\\.so$',
-            '^/vendor/.*/libPVRRS\\.so$',
-            '^/vendor/.*/libRSDriver.*\\.so$',
-            # Gralloc mapper
-            '^.*/gralloc\\..*\\.so$',
-            '^.*/android\\.hardware\\.graphics\\.mapper@\\d+\\.\\d+-impl\\.so$',
-        )
-        return self.compute_path_matched_lib(path_patterns)
+        return set(lib for lib in self.all_libs() if lib.is_sp_hal)
 
     def compute_sp_ndk(self):
         """Find all SP-NDK libraries."""
         return set(lib for lib in self.all_libs() if lib.is_sp_ndk)
 
-    def compute_sp_lib(self, generic_refs):
+    def compute_sp_lib(self, generic_refs, ignore_hidden_deps=False):
         def is_ndk(lib):
             return lib.is_ndk
 
         sp_ndk = self.compute_sp_ndk()
-        sp_ndk_closure = self.compute_closure(sp_ndk, is_ndk)
+        sp_ndk_closure = self.compute_deps_closure(
+                sp_ndk, is_ndk, ignore_hidden_deps)
         sp_ndk_indirect = sp_ndk_closure - sp_ndk
 
         sp_hal = self.compute_predefined_sp_hal()
-        sp_hal_closure = self.compute_closure(sp_hal, is_ndk)
+        sp_hal_closure = self.compute_deps_closure(
+                sp_hal, is_ndk, ignore_hidden_deps)
 
         def is_aosp_lib(lib):
             return (not generic_refs or \
@@ -1398,68 +1672,30 @@ class ELFLinker(object):
         return SPLibResult(sp_hal, sp_hal_dep, vndk_sp_hal, sp_ndk,
                            sp_ndk_indirect, vndk_sp_both)
 
-    def _po_sorted(self, lib_set, get_successors):
-        result = []
-        visited = set()
-        def traverse(lib):
-            for succ in get_successors(lib):
-                if succ in lib_set and succ not in visited:
-                    visited.add(succ)
-                    traverse(succ)
-            result.append(lib)
-        for lib in lib_set:
-            if lib not in visited:
-                visited.add(lib)
-                traverse(lib)
-        return result
-
-    def _deps_po_sorted(self, lib_set):
-        return self._po_sorted(lib_set, lambda x: x.deps)
-
-    def _users_po_sorted(self, lib_set):
-        return self._po_sorted(lib_set, lambda x: x.users)
-
     def normalize_partition_tags(self, sp_hals, generic_refs):
-        system_libs = set(self.lib_pt[PT_SYSTEM].values())
-        system_libs_po = self._deps_po_sorted(system_libs)
-
         def is_system_lib_or_sp_hal(lib):
             return lib.is_system_lib() or lib in sp_hals
 
-        for lib in system_libs_po:
-            if all(is_system_lib_or_sp_hal(dep) for dep in lib.deps):
-                # Good system lib.  Do nothing.
+        for lib in self.lib_pt[PT_SYSTEM].values():
+            if all(is_system_lib_or_sp_hal(dep) for dep in lib.deps_all):
                 continue
-            if not generic_refs or generic_refs.refs.get(lib.path):
-                # If lib is in AOSP generic reference, then we assume that the
-                # non-SP-HAL dependencies are errors.  Emit errors and remove
-                # the dependencies.
-                for dep in list(lib.dt_deps):
-                    if not is_system_lib_or_sp_hal(dep):
-                        print('error: {}: system exe/lib must not depend on '
-                              'vendor lib {}.  Assume such dependency does '
-                              'not exist.'.format(lib.path, dep.path),
-                              file=sys.stderr)
-                        lib.remove_dep(dep, ELFLinkData.NEEDED)
-                for dep in list(lib.dl_deps):
-                    if not is_system_lib_or_sp_hal(dep):
-                        print('error: {}: system exe/lib must not dlopen() '
-                              'vendor lib {}.  Assume such dependency does '
-                              'not exist.'.format(lib.path, dep.path),
-                              file=sys.stderr)
-                        lib.remove_dep(dep, ELFLinkData.DLOPEN)
-            else:
-                # If lib is not in AOSP generic reference, then we assume that
-                # lib must be moved to vendor partition.
-                for dep in lib.deps:
-                    if not is_system_lib_or_sp_hal(dep):
-                        print('warning: {}: system exe/lib must not depend on '
-                              'vendor lib {}.  Assuming {} should be placed in '
-                              'vendor partition.'
-                              .format(lib.path, dep.path, lib.path),
-                              file=sys.stderr)
-                new_path = lib.path.replace('/system/', '/vendor/')
-                self.rename_lib(lib, PT_VENDOR, new_path)
+            # If a system module is depending on a vendor shared library and
+            # such shared library is not a SP-HAL library, then emit an error
+            # and hide the dependency.
+            for dep in list(lib.deps_needed_all):
+                if not is_system_lib_or_sp_hal(dep):
+                    print('error: {}: system exe/lib must not depend on '
+                          'vendor lib {}.  Assume such dependency does '
+                          'not exist.'.format(lib.path, dep.path),
+                          file=sys.stderr)
+                    lib.hide_needed_dep(dep)
+            for dep in list(lib.deps_dlopen_all):
+                if not is_system_lib_or_sp_hal(dep):
+                    print('error: {}: system exe/lib must not dlopen() '
+                          'vendor lib {}.  Assume such dependency does '
+                          'not exist.'.format(lib.path, dep.path),
+                          file=sys.stderr)
+                    lib.hide_dlopen_dep(dep)
 
     @staticmethod
     def _parse_action_on_ineligible_lib(arg):
@@ -1517,7 +1753,7 @@ class ELFLinker(object):
                 return True
             return is_aosp_lib(lib)
 
-        sp_hal_dep = self.compute_closure(sp_hal, is_not_sp_hal_dep)
+        sp_hal_dep = self.compute_deps_closure(sp_hal, is_not_sp_hal_dep, True)
         sp_hal_dep -= sp_hal
 
         # Find VNDK-SP libs.
@@ -1529,7 +1765,7 @@ class ELFLinker(object):
                 self._parse_action_on_ineligible_lib(action_ineligible_vndk_sp)
         vndk_sp = set()
         for lib in itertools.chain(sp_hal, sp_hal_dep):
-            for dep in lib.deps:
+            for dep in lib.deps_all:
                 if is_not_vndk_sp(dep):
                     continue
                 if dep in predefined_vndk_sp:
@@ -1547,25 +1783,25 @@ class ELFLinker(object):
             return lib.is_ll_ndk or lib.is_sp_ndk or lib in vndk_sp or \
                    lib in fwk_only_rs
 
-        vndk_sp_indirect = self.compute_closure(
-                vndk_sp, is_not_vndk_sp_indirect)
+        vndk_sp_indirect = self.compute_deps_closure(
+                vndk_sp, is_not_vndk_sp_indirect, True)
         vndk_sp_indirect -= vndk_sp
 
         # Find unused predefined VNDK-SP libs.
         vndk_sp_unused = set(lib for lib in predefined_vndk_sp
-                             if self._is_in_vndk_sp_dir(lib.path))
+                             if VNDKLibDir.is_in_vndk_sp_dir(lib.path))
         vndk_sp_unused -= vndk_sp
         vndk_sp_unused -= vndk_sp_indirect
 
         # Find dependencies of unused predefined VNDK-SP libs.
         def is_not_vndk_sp_indirect_unused(lib):
             return is_not_vndk_sp_indirect(lib) or lib in vndk_sp_indirect
-        vndk_sp_unused_deps = self.compute_closure(
-                vndk_sp_unused, is_not_vndk_sp_indirect_unused)
+        vndk_sp_unused_deps = self.compute_deps_closure(
+                vndk_sp_unused, is_not_vndk_sp_indirect_unused, True)
         vndk_sp_unused_deps -= vndk_sp_unused
 
         vndk_sp_indirect_unused = set(lib for lib in predefined_vndk_sp_indirect
-                                      if self._is_in_vndk_sp_dir(lib.path))
+                                      if VNDKLibDir.is_in_vndk_sp_dir(lib.path))
         vndk_sp_indirect_unused -= vndk_sp_indirect
         vndk_sp_indirect_unused -= vndk_sp_unused
         vndk_sp_indirect_unused |= vndk_sp_unused_deps
@@ -1599,8 +1835,8 @@ class ELFLinker(object):
                 vndk_sp_indirect.add(lib)
 
             # Add the dependencies to vndk_sp_indirect if they are not vndk_sp.
-            closure = self.compute_closure(
-                    {lib}, lambda lib: lib not in vndk_sp_indirect_unused)
+            closure = self.compute_deps_closure(
+                    {lib}, lambda lib: lib not in vndk_sp_indirect_unused, True)
             closure.remove(lib)
             vndk_sp_indirect_unused.difference_update(closure)
             vndk_sp_indirect.update(closure)
@@ -1626,7 +1862,7 @@ class ELFLinker(object):
             result = set()
             for lib in libs:
                 exts = set(lib.imported_ext_symbols.keys())
-                for dep in lib.deps:
+                for dep in lib.deps_all:
                     if not is_vndk_sp_public(dep):
                         continue
                     if dep in vndk_sp_ext or dep in vndk_sp_indirect_ext:
@@ -1672,7 +1908,7 @@ class ELFLinker(object):
         def collect_vndk(vendor_libs):
             next_vendor_libs = set()
             for lib in vendor_libs:
-                for dep in lib.deps:
+                for dep in lib.deps_all:
                     if is_vndk_sp_unused(dep):
                         relabel_vndk_sp_as_used(dep)
                         continue
@@ -1700,7 +1936,7 @@ class ELFLinker(object):
         while candidates:
             candidates = collect_vndk(candidates)
 
-        vndk_indirect = self.compute_closure(vndk, is_not_vndk)
+        vndk_indirect = self.compute_deps_closure(vndk, is_not_vndk, True)
         vndk_indirect -= vndk
 
         def is_vndk(lib):
@@ -1732,14 +1968,16 @@ class ELFLinker(object):
         def is_not_ll_ndk_indirect(lib):
             return lib.is_ll_ndk or is_vndk_sp(lib) or is_vndk(lib)
 
-        ll_ndk_indirect = self.compute_closure(ll_ndk, is_not_ll_ndk_indirect)
+        ll_ndk_indirect = self.compute_deps_closure(
+                ll_ndk, is_not_ll_ndk_indirect, True)
         ll_ndk_indirect -= ll_ndk
 
         def is_not_sp_ndk_indirect(lib):
             return lib.is_ll_ndk or lib.is_sp_ndk or lib in ll_ndk_indirect or \
                    is_vndk_sp(lib) or is_vndk(lib)
 
-        sp_ndk_indirect = self.compute_closure(sp_ndk, is_not_sp_ndk_indirect)
+        sp_ndk_indirect = self.compute_deps_closure(
+                sp_ndk, is_not_sp_ndk_indirect, True)
         sp_ndk_indirect -= sp_ndk
 
         # Return the VNDK classifications.
@@ -1780,21 +2018,27 @@ class ELFLinker(object):
         return closure
 
     @classmethod
-    def compute_deps_closure(cls, root_set, is_excluded):
-        return cls._compute_closure(root_set, is_excluded, lambda x: x.deps)
-
-    compute_closure = compute_deps_closure
+    def compute_deps_closure(cls, root_set, is_excluded,
+                             ignore_hidden_deps=False):
+        get_successors = (lambda x: x.deps_good) if ignore_hidden_deps else \
+                         (lambda x: x.deps_all)
+        return cls._compute_closure(root_set, is_excluded, get_successors)
 
     @classmethod
-    def compute_users_closure(cls, root_set, is_excluded):
-        return cls._compute_closure(root_set, is_excluded, lambda x: x.users)
+    def compute_users_closure(cls, root_set, is_excluded,
+                              ignore_hidden_users=False):
+        get_successors = (lambda x: x.users_good) if ignore_hidden_users else \
+                         (lambda x: x.users_all)
+        return cls._compute_closure(root_set, is_excluded, get_successors)
 
     @staticmethod
     def _create_internal(scan_elf_files, system_dirs, system_dirs_as_vendor,
                          system_dirs_ignored, vendor_dirs,
                          vendor_dirs_as_system, vendor_dirs_ignored,
                          extra_deps, generic_refs, tagged_paths):
-        graph = ELFLinker(tagged_paths)
+        vndk_lib_dirs = VNDKLibDir.create_from_dirs(system_dirs, vendor_dirs)
+        ro_vndk_version = vndk_lib_dirs.find_vendor_vndk_version(vendor_dirs)
+        graph = ELFLinker(tagged_paths, vndk_lib_dirs, ro_vndk_version)
 
         if system_dirs:
             for path in system_dirs:
@@ -1812,7 +2056,7 @@ class ELFLinker(object):
 
         if extra_deps:
             for path in extra_deps:
-                graph.load_extra_deps(path)
+                graph.add_dlopen_deps(path)
 
         graph.resolve_deps(generic_refs)
 
@@ -1827,15 +2071,6 @@ class ELFLinker(object):
                 scan_elf_files, system_dirs, system_dirs_as_vendor,
                 system_dirs_ignored, vendor_dirs, vendor_dirs_as_system,
                 vendor_dirs_ignored, extra_deps, generic_refs, tagged_paths)
-
-    @staticmethod
-    def create_from_dump(system_dirs=None, system_dirs_as_vendor=None,
-                         vendor_dirs=None, vendor_dirs_as_system=None,
-                         extra_deps=None, generic_refs=None, tagged_paths=None):
-        return ELFLinker._create_internal(
-                scan_elf_dump_files, system_dirs, system_dirs_as_vendor,
-                vendor_dirs, vendor_dirs_as_system, extra_deps, generic_refs,
-                tagged_paths)
 
 
 #------------------------------------------------------------------------------
@@ -2112,7 +2347,7 @@ class VNDKCommandBase(ELFGraphCommand):
             script_dir = os.path.dirname(os.path.abspath(__file__))
             minimum_dlopen_deps = os.path.join(script_dir, 'datasets',
                                                'minimum_dlopen_deps.txt')
-            graph.load_extra_deps(minimum_dlopen_deps)
+            graph.add_dlopen_deps(minimum_dlopen_deps)
 
         return (generic_refs, graph, tagged_paths)
 
@@ -2145,7 +2380,7 @@ class VNDKCommand(VNDKCommandBase):
         for lib in lib_set.values():
             if not lib.num_users:
                 continue
-            if all((user.partition != partition for user in lib.users)):
+            if all((user.partition != partition for user in lib.users_all)):
                 print(error_msg.format(lib.path), file=sys.stderr)
 
     def _warn_incorrect_partition(self, graph):
@@ -2325,21 +2560,11 @@ class DepsInsightCommand(VNDKCommandBase):
         parser.add_argument(
                 '--output', '-o', help='output directory')
 
-    def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
-
-        module_info = ModuleInfo.load_from_path_or_default(args.module_info)
-
-        # Compute vndk heuristics.
-        vndk_lib = graph.compute_degenerated_vndk(
-                generic_refs, tagged_paths, args.action_ineligible_vndk_sp,
-                args.action_ineligible_vndk)
-
-        # Serialize data.
+    @staticmethod
+    def serialize_data(libs, vndk_lib, module_info):
         strs = []
         strs_dict = dict()
 
-        libs = list(graph.all_libs())
         libs.sort(key=lambda lib: lib.path)
         libs_dict = {lib: i for i, lib in enumerate(libs)}
 
@@ -2356,7 +2581,7 @@ class DepsInsightCommand(VNDKCommandBase):
             return [libs_dict[lib] for lib in sorted(libs)]
 
         def collect_deps(lib):
-            queue = list(lib.deps)
+            queue = list(lib.deps_all)
             visited = set(queue)
             visited.add(lib)
             deps = []
@@ -2366,7 +2591,7 @@ class DepsInsightCommand(VNDKCommandBase):
                 # Collect dependencies for next queue.
                 next_queue = []
                 for lib in queue:
-                    for dep in lib.deps:
+                    for dep in lib.deps_all:
                         if dep not in visited:
                             next_queue.append(dep)
                             visited.add(dep)
@@ -2395,8 +2620,24 @@ class DepsInsightCommand(VNDKCommandBase):
                          32 if lib.elf.is_32bit else 64,
                          collect_tags(lib),
                          collect_deps(lib),
-                         collect_path_sorted_lib_idxs(lib.users),
+                         collect_path_sorted_lib_idxs(lib.users_all),
                          collect_source_dir_paths(lib)])
+
+        return (strs, mods)
+
+    def main(self, args):
+        generic_refs, graph, tagged_paths = self.create_from_args(args)
+
+        module_info = ModuleInfo.load_from_path_or_default(args.module_info)
+
+        # Compute vndk heuristics.
+        vndk_lib = graph.compute_degenerated_vndk(
+                generic_refs, tagged_paths, args.action_ineligible_vndk_sp,
+                args.action_ineligible_vndk)
+
+        # Serialize data.
+        strs, mods = self.serialize_data(list(graph.all_libs()), vndk_lib,
+                                         module_info)
 
         # Generate output files.
         makedirs(args.output, exist_ok=True)
@@ -2454,11 +2695,11 @@ class DepsCommand(ELFGraphCommand):
 
                 data = []
                 if args.revert:
-                    for assoc_lib in sorted(lib.users):
+                    for assoc_lib in sorted(lib.users_all):
                         data.append((assoc_lib.path,
                                      collect_symbols(assoc_lib, lib)))
                 else:
-                    for assoc_lib in sorted(lib.deps):
+                    for assoc_lib in sorted(lib.deps_all):
                         data.append((assoc_lib.path,
                                      collect_symbols(lib, assoc_lib)))
                 results.append((name, data))
@@ -2639,7 +2880,7 @@ class CheckDepCommand(CheckDepCommandBase):
                               file=sys.stderr)
 
             # Check whether vendor modules depend on ineligible libs.
-            for dep in lib.deps:
+            for dep in lib.deps_all:
                 if dep not in vendor_libs and dep not in eligible_libs:
                     num_errors += 1
                     bad_deps.add(dep)
@@ -2688,7 +2929,7 @@ class CheckEligibleListCommand(CheckDepCommandBase):
         delimiter = ''
         for lib in sorted(eligible_libs):
             bad_deps = []
-            for dep in lib.deps:
+            for dep in lib.deps_all:
                 if dep not in eligible_libs and dep not in indirect_libs:
                     print('error: eligible lib "{}" should not depend on '
                           'non-eligible lib "{}".'.format(lib.path, dep.path),
@@ -2702,7 +2943,7 @@ class CheckEligibleListCommand(CheckDepCommandBase):
         # Check the libbinder dependencies.
         for lib in sorted(eligible_libs):
             bad_deps = []
-            for dep in lib.deps:
+            for dep in lib.deps_all:
                 if os.path.basename(dep.path) == 'libbinder.so':
                     print('error: eligible lib "{}" should not depend on '
                           'libbinder.so.'.format(lib.path), file=sys.stderr)
@@ -2773,7 +3014,7 @@ class DepGraphCommand(ELFGraphCommand):
                 'depends': [],
                 'violates': [],
             }
-            for dep in lib.deps:
+            for dep in lib.deps_all:
                 if self._check_if_allowed(tag,
                         self._get_tag_from_lib(dep, tagged_paths)):
                     lib_item['depends'].append(dep.path)

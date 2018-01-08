@@ -39,7 +39,10 @@
     <uses-permission android:name="android.permission.TRANSMIT_IR" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
-
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES"/>
+    <!-- Required for drawing overlay windows (TYPE_SYSTEM_ALERT, TYPE_APPLICATION_OVERLAY) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
     <!-- For android.media.audiofx.Visualizer -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -1310,6 +1313,30 @@
             </intent-filter>
         </activity>
 
+        <!-- A FileProvider for passing the APK to be installed to the system. -->
+        <provider
+            android:name="android.support.v4.content.FileProvider"
+            android:authorities="com.example.android.apis.installapkprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <activity android:name=".content.InstallApkSessionApi"
+                android:label="@string/activity_install_apk_session_api"
+                android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.SAMPLE_CODE" />
+            </intent-filter>
+            <intent-filter>
+                <action android:exported="true"
+                        android:name="com.example.android.apis.content.SESSION_API_PACKAGE_INSTALLED" />
+            </intent-filter>
+        </activity>
+
         <activity android:name=".content.DocumentsSample"
                 android:label="@string/activity_documents"
                 android:enabled="@bool/atLeastKitKat">
@@ -2499,6 +2526,13 @@
         </activity>
 
         <activity android:name=".view.NumberPickerActivity" android:label="Views/Number Picker">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.SAMPLE_CODE" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".view.OverlayWindowActivity" android:label="Views/Overlay Window">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.SAMPLE_CODE" />
