@@ -697,11 +697,17 @@ class TaggedDict(object):
     def is_tag_visible(cls, from_tag, to_tag):
         return to_tag in cls._TAG_VISIBILITY[from_tag]
 
-    def __init__(self):
+    def __init__(self, vndk_lib_dirs=None):
         self._path_tag = dict()
         for tag in self.TAGS:
             setattr(self, tag, set())
         self._regex_patterns = []
+
+        if vndk_lib_dirs is None:
+            self._vndk_suffixes = ['']
+        else:
+            self._vndk_suffixes = [VNDKLibDir.create_vndk_dir_suffix(version)
+                                   for version in vndk_lib_dirs]
 
     def add(self, tag, lib):
         lib_set = getattr(self, tag)
@@ -789,23 +795,32 @@ class TaggedPathDict(TaggedDict):
             self.add(self._normalize_tag(row[tag_col]), row[path_col])
 
     @staticmethod
-    def create_from_csv(fp):
-        d = TaggedPathDict()
+    def create_from_csv(fp, vndk_lib_dirs=None):
+        d = TaggedPathDict(vndk_lib_dirs)
         d.load_from_csv(fp)
         return d
 
     @staticmethod
-    def create_from_csv_path(path):
+    def create_from_csv_path(path, vndk_lib_dirs=None):
         with open(path, 'r') as fp:
-            return TaggedPathDict.create_from_csv(fp)
+            return TaggedPathDict.create_from_csv(fp, vndk_lib_dirs)
 
-    @staticmethod
-    def _enumerate_paths(pattern):
+    def _enumerate_paths_with_lib(self, pattern):
         if '${LIB}' in pattern:
             yield pattern.replace('${LIB}', 'lib')
             yield pattern.replace('${LIB}', 'lib64')
         else:
             yield pattern
+
+    def _enumerate_paths(self, pattern):
+        if '${VNDK_VER}' not in pattern:
+            for path in self._enumerate_paths_with_lib(pattern):
+                yield path
+            return
+        for suffix in self._vndk_suffixes:
+            pattern_with_suffix = pattern.replace('${VNDK_VER}', suffix)
+            for path in self._enumerate_paths_with_lib(pattern_with_suffix):
+                yield path
 
     def add(self, tag, path):
         if path.startswith('[regex]'):
@@ -911,15 +926,21 @@ class VNDKLibDir(list):
 
 
     @classmethod
+    def create_vndk_dir_suffix(cls, version):
+        """Create VNDK version suffix."""
+        return '' if version == 'current' else '-' + version
+
+
+    @classmethod
     def create_vndk_sp_dir_name(cls, version):
         """Create VNDK-SP directory name from a given version."""
-        return 'vndk-sp' if version == 'current' else 'vndk-sp-' + version
+        return 'vndk-sp' + cls.create_vndk_dir_suffix(version)
 
 
     @classmethod
     def create_vndk_dir_name(cls, version):
         """Create VNDK directory name from a given version."""
-        return 'vndk' if version == 'current' else 'vndk-' + version
+        return 'vndk' + cls.create_vndk_dir_suffix(version)
 
 
     @classmethod
@@ -1356,19 +1377,19 @@ class ELFLinker(object):
                  ro_vndk_version='current'):
         self.lib_pt = [ELFLibDict() for i in range(NUM_PARTITIONS)]
 
+        if vndk_lib_dirs is None:
+            vndk_lib_dirs = VNDKLibDir.create_default()
+
+        self.vndk_lib_dirs = vndk_lib_dirs
+
         if tagged_paths is None:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             dataset_path = os.path.join(
                     script_dir, 'datasets', 'minimum_tag_file.csv')
-            self.tagged_paths = \
-                    TaggedPathDict.create_from_csv_path(dataset_path)
+            self.tagged_paths = TaggedPathDict.create_from_csv_path(
+                    dataset_path, vndk_lib_dirs)
         else:
             self.tagged_paths = tagged_paths
-
-        if vndk_lib_dirs is None:
-            self.vndk_lib_dirs = VNDKLibDir.create_default()
-        else:
-            self.vndk_lib_dirs = vndk_lib_dirs
 
         self.ro_vndk_version = ro_vndk_version
 
@@ -1393,8 +1414,8 @@ class ELFLinker(object):
                 src.add_dlopen_dep(dst)
                 num_matches += 1
         if num_matches == 0:
-            print('error: Failed to add dlopen dependency from {} to {}.'
-                  .format(src_path, dst_path), file=sys.stderr)
+            raise ValueError('Failed to add dlopen dependency from {} to {}'
+                             .format(src_path, dst_path))
 
     def _get_libs_in_elf_class(self, elf_class, path):
         result = set()
@@ -1480,11 +1501,16 @@ class ELFLinker(object):
 
     def add_dlopen_deps(self, path):
         patt = re.compile('([^:]*):\\s*(.*)')
-        with open(path, 'r') as f:
-            for line in f:
+        with open(path, 'r') as dlopen_dep_file:
+            for line_no, line in enumerate(dlopen_dep_file, start=1):
                 match = patt.match(line)
-                if match:
+                if not match:
+                    continue
+                try:
                     self.add_dlopen_dep(match.group(1), match.group(2))
+                except ValueError as e:
+                    print('error:{}:{}: {}.'.format(path, line_no, e),
+                          file=sys.stderr)
 
     def _find_exported_symbol(self, symbol, libs):
         """Find the shared library with the exported symbol."""
@@ -1641,13 +1667,16 @@ class ELFLinker(object):
         return set(lib for lib in self.all_libs() if lib.is_sp_ndk)
 
     def compute_sp_lib(self, generic_refs, ignore_hidden_deps=False):
-        def is_ndk(lib):
-            return lib.is_ndk
+        def is_ndk_or_sp_hal(lib):
+            return lib.is_ndk or lib.is_sp_hal
 
         sp_ndk = self.compute_sp_ndk()
         sp_ndk_closure = self.compute_deps_closure(
-                sp_ndk, is_ndk, ignore_hidden_deps)
+                sp_ndk, is_ndk_or_sp_hal, ignore_hidden_deps)
         sp_ndk_indirect = sp_ndk_closure - sp_ndk
+
+        def is_ndk(lib):
+            return lib.is_ndk
 
         sp_hal = self.compute_predefined_sp_hal()
         sp_hal_closure = self.compute_deps_closure(
@@ -1973,8 +2002,8 @@ class ELFLinker(object):
         ll_ndk_indirect -= ll_ndk
 
         def is_not_sp_ndk_indirect(lib):
-            return lib.is_ll_ndk or lib.is_sp_ndk or lib in ll_ndk_indirect or \
-                   is_vndk_sp(lib) or is_vndk(lib)
+            return lib.is_ll_ndk or lib.is_sp_ndk or lib.is_sp_hal or \
+                   lib in ll_ndk_indirect or is_vndk_sp(lib) or is_vndk(lib)
 
         sp_ndk_indirect = self.compute_deps_closure(
                 sp_ndk, is_not_sp_ndk_indirect, True)
@@ -2035,8 +2064,11 @@ class ELFLinker(object):
     def _create_internal(scan_elf_files, system_dirs, system_dirs_as_vendor,
                          system_dirs_ignored, vendor_dirs,
                          vendor_dirs_as_system, vendor_dirs_ignored,
-                         extra_deps, generic_refs, tagged_paths):
-        vndk_lib_dirs = VNDKLibDir.create_from_dirs(system_dirs, vendor_dirs)
+                         extra_deps, generic_refs, tagged_paths,
+                         vndk_lib_dirs):
+        if vndk_lib_dirs is None:
+            vndk_lib_dirs = VNDKLibDir.create_from_dirs(
+                    system_dirs, vendor_dirs)
         ro_vndk_version = vndk_lib_dirs.find_vendor_vndk_version(vendor_dirs)
         graph = ELFLinker(tagged_paths, vndk_lib_dirs, ro_vndk_version)
 
@@ -2066,11 +2098,13 @@ class ELFLinker(object):
     def create(system_dirs=None, system_dirs_as_vendor=None,
                system_dirs_ignored=None, vendor_dirs=None,
                vendor_dirs_as_system=None, vendor_dirs_ignored=None,
-               extra_deps=None, generic_refs=None, tagged_paths=None):
+               extra_deps=None, generic_refs=None, tagged_paths=None,
+               vndk_lib_dirs=None):
         return ELFLinker._create_internal(
                 scan_elf_files, system_dirs, system_dirs_as_vendor,
                 system_dirs_ignored, vendor_dirs, vendor_dirs_as_system,
-                vendor_dirs_ignored, extra_deps, generic_refs, tagged_paths)
+                vendor_dirs_ignored, extra_deps, generic_refs, tagged_paths,
+                vndk_lib_dirs)
 
 
 #------------------------------------------------------------------------------
@@ -2304,8 +2338,11 @@ class ELFGraphCommand(Command):
 
         generic_refs = self.get_generic_refs_from_args(args)
 
+        vndk_lib_dirs = VNDKLibDir.create_from_dirs(args.system, args.vendor)
+
         if args.tag_file:
-            tagged_paths = TaggedPathDict.create_from_csv_path(args.tag_file)
+            tagged_paths = TaggedPathDict.create_from_csv_path(
+                    args.tag_file, vndk_lib_dirs)
         else:
             tagged_paths = None
 
@@ -2317,7 +2354,7 @@ class ELFGraphCommand(Command):
                                  generic_refs=generic_refs,
                                  tagged_paths=tagged_paths)
 
-        return (generic_refs, graph, tagged_paths)
+        return (generic_refs, graph, tagged_paths, vndk_lib_dirs)
 
 
 class VNDKCommandBase(ELFGraphCommand):
@@ -2340,8 +2377,9 @@ class VNDKCommandBase(ELFGraphCommand):
     def create_from_args(self, args):
         """Create all essential data structures for VNDK computation."""
 
-        generic_refs, graph, tagged_paths = \
-                super(VNDKCommandBase, self).create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs  = \
+                super(VNDKCommandBase, self).\
+                create_from_args(args)
 
         if not args.no_default_dlopen_deps:
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2349,7 +2387,7 @@ class VNDKCommandBase(ELFGraphCommand):
                                                'minimum_dlopen_deps.txt')
             graph.add_dlopen_deps(minimum_dlopen_deps)
 
-        return (generic_refs, graph, tagged_paths)
+        return (generic_refs, graph, tagged_paths, vndk_lib_dirs)
 
 
 class VNDKCommand(VNDKCommandBase):
@@ -2524,7 +2562,8 @@ class VNDKCommand(VNDKCommandBase):
         writer.writerow(['Total', None] + calc_total_size(graph.all_libs()))
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
 
         if args.warn_incorrect_partition:
             self._warn_incorrect_partition(graph)
@@ -2626,7 +2665,8 @@ class DepsInsightCommand(VNDKCommandBase):
         return (strs, mods)
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
 
         module_info = ModuleInfo.load_from_path_or_default(args.module_info)
 
@@ -2679,7 +2719,8 @@ class DepsCommand(ELFGraphCommand):
         parser.add_argument('--module-info')
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs  = \
+                self.create_from_args(args)
 
         module_info = ModuleInfo.load_from_path_or_default(args.module_info)
 
@@ -2762,7 +2803,8 @@ class DepsClosureCommand(ELFGraphCommand):
 
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
 
         # Find root/excluded libraries by their paths.
         def report_error(path):
@@ -2816,7 +2858,8 @@ class DepsUnresolvedCommand(ELFGraphCommand):
             print('\tUNRESOLVED_SYMBOL:', symbol)
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
         module_info = ModuleInfo.load_from_path_or_default(args.module_info)
 
         libs = graph.all_libs()
@@ -2895,10 +2938,13 @@ class CheckDepCommand(CheckDepCommandBase):
         return num_errors
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
 
-        tagged_paths = TaggedPathDict.create_from_csv_path(args.tag_file)
-        tagged_libs = TaggedLibDict.create_from_graph(graph, tagged_paths)
+        tagged_paths = TaggedPathDict.create_from_csv_path(
+                args.tag_file, vndk_lib_dirs)
+        tagged_libs = TaggedLibDict.create_from_graph(
+                graph, tagged_paths, generic_refs)
 
         module_info = ModuleInfo.load_from_path_or_default(args.module_info)
 
@@ -2956,10 +3002,13 @@ class CheckEligibleListCommand(CheckDepCommandBase):
         return num_errors
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
 
-        tagged_paths = TaggedPathDict.create_from_csv_path(args.tag_file)
-        tagged_libs = TaggedLibDict.create_from_graph(graph, tagged_paths)
+        tagged_paths = TaggedPathDict.create_from_csv_path(
+                args.tag_file, vndk_lib_dirs)
+        tagged_libs = TaggedLibDict.create_from_graph(
+                graph, tagged_paths, generic_refs)
 
         module_info = ModuleInfo.load_from_path_or_default(args.module_info)
 
@@ -3030,9 +3079,11 @@ class DepGraphCommand(ELFGraphCommand):
         return data, violate_libs
 
     def main(self, args):
-        generic_refs, graph, tagged_paths = self.create_from_args(args)
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
 
-        tagged_paths = TaggedPathDict.create_from_csv_path(args.tag_file)
+        tagged_paths = TaggedPathDict.create_from_csv_path(
+                args.tag_file, vndk_lib_dirs)
         data, violate_libs = self._get_dep_graph(graph, tagged_paths)
         data.sort(key=lambda lib_item: (lib_item['tag'],
                                         lib_item['violate_count']))

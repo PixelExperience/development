@@ -9,14 +9,9 @@ import_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 import_path = os.path.abspath(os.path.join(import_path, 'utils'))
 sys.path.insert(1, import_path)
 
-from utils import read_output_content
-from utils import run_header_abi_dumper
-from utils import run_abi_diff
-from utils import SOURCE_ABI_DUMP_EXT
-from utils import TARGET_ARCHS
-from utils import get_build_var
-from utils import make_library
-from utils import AOSP_DIR
+from utils import (
+        AOSP_DIR, SOURCE_ABI_DUMP_EXT, TARGET_ARCHS, read_output_content,
+        run_abi_diff, run_header_abi_dumper)
 from module import Module
 from gen_all import make_and_copy_reference_dumps
 from gen_all import DEFAULT_CFLAGS
@@ -217,6 +212,11 @@ class MyTest(unittest.TestCase):
     def test_libreproducability(self):
         self.prepare_and_absolute_diff_all_archs("libreproducability",
                                                  "libreproducability")
+
+    def test_libgolden_cpp_member_name_changed(self):
+        self.prepare_and_run_abi_diff_all_archs(
+            "libgolden_cpp",
+            "libgolden_cpp_member_name_changed", 0)
 
 
 if __name__ == '__main__':

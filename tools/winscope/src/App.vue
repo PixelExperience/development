@@ -68,8 +68,8 @@
 
 <script>
 
-import jsonProtoDefs from '../proto/frameworks/base/core/proto/android/server/windowmanagertrace.proto'
-import jsonProtoDefsSF from '../proto/frameworks/native/services/surfaceflinger/layerproto/layerstrace.proto'
+import jsonProtoDefs from 'frameworks/base/core/proto/android/server/windowmanagertrace.proto'
+import jsonProtoDefsSF from 'frameworks/native/services/surfaceflinger/layerproto/layerstrace.proto'
 import protobuf from 'protobufjs'
 
 import TreeView from './TreeView.vue'
@@ -191,6 +191,7 @@ export default {
 
         try {
           var decoded = filetype.protoType.decode(buffer);
+          decoded = filetype.protoType.toObject(decoded, {enums: String, defaults: true});
           var transformed = filetype.transform(decoded);
         } catch (ex) {
           this.title = this.filename + " (loading " + filetype.name + "):" + ex;
