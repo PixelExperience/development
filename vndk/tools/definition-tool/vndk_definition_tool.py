@@ -3,9 +3,11 @@
 from __future__ import print_function
 
 import argparse
+import codecs
 import collections
 import copy
 import csv
+import io
 import itertools
 import json
 import os
@@ -15,6 +17,7 @@ import shutil
 import stat
 import struct
 import sys
+import zipfile
 
 
 #------------------------------------------------------------------------------
@@ -24,6 +27,12 @@ import sys
 if sys.version_info >= (3, 0):
     from os import makedirs
     from mmap import ACCESS_READ, mmap
+
+    def get_py3_bytes(buf):
+        return buf
+
+    create_chr = chr
+    enumerate_bytes = enumerate
 else:
     from mmap import ACCESS_READ, mmap
 
@@ -45,12 +54,148 @@ else:
                 return ord(res)
             return res
 
+    class Py3Bytes(bytes):
+        def __getitem__(self, key):
+            res = super(Py3Bytes, self).__getitem__(key)
+            if type(key) == int:
+                return ord(res)
+            return Py3Bytes(res)
+
+    def get_py3_bytes(buf):
+        return Py3Bytes(buf)
+
+    create_chr = unichr
+
+    def enumerate_bytes(iterable):
+        for i, byte in enumerate(iterable):
+            yield (i, ord(byte))
+
     FileNotFoundError = OSError
 
 try:
     from sys import intern
 except ImportError:
     pass
+
+
+#------------------------------------------------------------------------------
+# Modified UTF-8 Encoder and Decoder
+#------------------------------------------------------------------------------
+
+def encode_mutf8(input, errors='strict'):
+    i = 0
+    res = io.BytesIO()
+
+    for i, char in enumerate(input):
+        code = ord(char)
+        if code == 0x00:
+            res.write(b'\xc0\x80')
+        elif code < 0x80:
+            res.write(bytearray((code,)))
+        elif code < 0x800:
+            res.write(bytearray((0xc0 | (code >> 6), 0x80 | (code & 0x3f))))
+        elif code < 0x10000:
+            res.write(bytearray((0xe0 | (code >> 12),
+                                 0x80 | ((code >> 6) & 0x3f),
+                                 0x80 | (code & 0x3f))))
+        elif code < 0x110000:
+            code -= 0x10000
+            code_hi = 0xd800 + (code >> 10)
+            code_lo = 0xdc00 + (code & 0x3ff)
+            res.write(bytearray((0xe0 | (code_hi >> 12),
+                                 0x80 | ((code_hi >> 6) & 0x3f),
+                                 0x80 | (code_hi & 0x3f),
+                                 0xe0 | (code_lo >> 12),
+                                 0x80 | ((code_lo >> 6) & 0x3f),
+                                 0x80 | (code_lo & 0x3f))))
+        else:
+            raise UnicodeEncodeError('mutf-8', input, i, i + 1,
+                                     'illegal code point')
+
+    return (res.getvalue(), i)
+
+
+def decode_mutf8(input, errors='strict'):
+    res = io.StringIO()
+
+    num_next = 0
+
+    i = 0
+    code = 0
+    start = 0
+
+    code_surrogate = None
+    start_surrogate = None
+
+    def raise_error(start, reason):
+        raise UnicodeDecodeError('mutf-8', input, start, i + 1, reason)
+
+    for i, byte in enumerate_bytes(input):
+        if (byte & 0x80) == 0x00:
+            if num_next > 0:
+                raise_error(start, 'invalid continuation byte')
+            num_next = 0
+            code = byte
+            start = i
+        elif (byte & 0xc0) == 0x80:
+            if num_next < 1:
+                raise_error(start, 'invalid start byte')
+            num_next -= 1
+            code = (code << 6) | (byte & 0x3f)
+        elif (byte & 0xe0) == 0xc0:
+            if num_next > 0:
+                raise_error(start, 'invalid continuation byte')
+            num_next = 1
+            code = byte & 0x1f
+            start = i
+        elif (byte & 0xf0) == 0xe0:
+            if num_next > 0:
+                raise_error(start, 'invalid continuation byte')
+            num_next = 2
+            code = byte & 0x0f
+            start = i
+        else:
+            raise_error(i, 'invalid start byte')
+
+        if num_next == 0:
+            if code >= 0xd800 and code <= 0xdbff:  # High surrogate
+                if code_surrogate is not None:
+                    raise_error(start_surrogate, 'invalid high surrogate')
+                code_surrogate = code
+                start_surrogate = start
+                continue
+
+            if code >= 0xdc00 and code <= 0xdfff:  # Low surrogate
+                if code_surrogate is None:
+                    raise_error(start, 'invalid low surrogate')
+                code = ((code_surrogate & 0x3f) << 10) | (code & 0x3f) + 0x10000
+                code_surrogate = None
+                start_surrogate = None
+            elif code_surrogate is not None:
+                if errors == 'ignore':
+                    res.write(create_chr(code_surrogate))
+                    code_surrogate = None
+                    start_surrogate = None
+                else:
+                    raise_error(start_surrogate, 'illegal surrogate')
+
+            res.write(create_chr(code))
+
+    # Check the unexpected end of input
+    if num_next > 0:
+        raise_error(start, 'unexpected end')
+    if code_surrogate is not None:
+        raise_error(start_surrogate, 'unexpected end')
+
+    return (res.getvalue(), i)
+
+
+def probe_mutf8(name):
+    if name == 'mutf-8':
+        return codecs.CodecInfo(encode_mutf8, decode_mutf8)
+    return None
+
+codecs.register(probe_mutf8)
 
 
 #------------------------------------------------------------------------------
@@ -103,6 +248,26 @@ def defaultnamedtuple(typename, field_names, default):
                 args.append(copy.copy(default))
         return base_cls.__new__(cls, *args)
     return type(typename, (base_cls,), {'__new__': __new__})
+
+
+def create_struct(name, fields):
+    """Create a namedtuple with unpack_from() function.
+    >>> Point = create_struct('Point', [('x', 'I'), ('y', 'I')])
+    >>> pt = Point.unpack_from(b'\\x00\\x00\\x00\\x00\\x01\\x00\\x00\\x00', 0)
+    >>> pt.x
+    0
+    >>> pt.y
+    1
+    """
+    field_names = [name for name, ty in fields]
+    cls = collections.namedtuple(name, field_names)
+    cls.struct_fmt = ''.join(ty for name, ty in fields)
+    cls.struct_size = struct.calcsize(cls.struct_fmt)
+    def unpack_from(cls, buf, offset=0):
+        unpacked = struct.unpack_from(cls.struct_fmt, buf, offset)
+        return cls.__new__(cls, *unpacked)
+    cls.unpack_from = classmethod(unpack_from)
+    return cls
 
 
 #------------------------------------------------------------------------------
@@ -613,6 +778,177 @@ class ELF(object):
         elf._parse_from_dump_buf(buf)
         return elf
 
+    def is_jni_lib(self):
+        """Test whether the ELF file looks like a JNI library."""
+        for name in ['libnativehelper.so', 'libandroid_runtime.so']:
+            if name in self.dt_needed:
+                return True
+        for symbol in itertools.chain(self.imported_symbols,
+                                      self.exported_symbols):
+            if symbol.startswith('JNI_') or symbol.startswith('Java_') or \
+               symbol == 'jniRegisterNativeMethods':
+                return True
+        return False
+
+
+#------------------------------------------------------------------------------
+# APK / Dex File Reader
+#------------------------------------------------------------------------------
+
+class DexFileReader(object):
+    @classmethod
+    def extract_dex_string(cls, buf, offset=0):
+        end = buf.find(b'\0', offset)
+        res = buf[offset:] if end == -1 else buf[offset:end]
+        return res.decode('mutf-8', 'ignore')
+
+    if sys.version_info < (3,):
+        _extract_dex_string = extract_dex_string
+
+        @classmethod
+        def extract_dex_string(cls, buf, offset=0):
+            return cls._extract_dex_string(buf, offset).encode('utf-8')
+
+
+    @classmethod
+    def extract_uleb128(cls, buf, offset=0):
+        num_bytes = 0
+        result = 0
+        shift = 0
+        while True:
+            byte = buf[offset + num_bytes]
+            result |= (byte & 0x7f) << shift
+            num_bytes += 1
+            if (byte & 0x80) == 0:
+                break
+            shift += 7
+        return (result, num_bytes)
+
+
+    Header = create_struct('Header', (
+        ('magic', '8s'),
+        ('checksum', 'I'),
+        ('signature', '20s'),
+        ('file_size', 'I'),
+        ('header_size', 'I'),
+        ('endian_tag', 'I'),
+        ('link_size', 'I'),
+        ('link_off', 'I'),
+        ('map_off', 'I'),
+        ('string_ids_size', 'I'),
+        ('string_ids_off', 'I'),
+        ('type_ids_size', 'I'),
+        ('type_ids_off', 'I'),
+        ('proto_ids_size', 'I'),
+        ('proto_ids_off', 'I'),
+        ('field_ids_size', 'I'),
+        ('field_ids_off', 'I'),
+        ('method_ids_size', 'I'),
+        ('method_ids_off', 'I'),
+        ('class_defs_size', 'I'),
+        ('class_defs_off', 'I'),
+        ('data_size', 'I'),
+        ('data_off', 'I'),
+    ))
+
+
+    StringId = create_struct('StringId', (
+        ('string_data_off', 'I'),
+    ))
+
+
+    @staticmethod
+    def generate_classes_dex_names():
+        yield 'classes.dex'
+        for i in itertools.count(start=2):
+            yield 'classes{}.dex'.format(i)
+
+
+    @classmethod
+    def enumerate_dex_strings_buf(cls, buf):
+        buf = get_py3_bytes(buf)
+        header = cls.Header.unpack_from(buf, offset=0)
+
+        StringId = cls.StringId
+        struct_size = StringId.struct_size
+
+        offset_start = header.string_ids_off
+        offset_end = offset_start + header.string_ids_size * struct_size
+
+        for offset in range(offset_start, offset_end, struct_size):
+            offset = StringId.unpack_from(buf, offset).string_data_off
+            offset += cls.extract_uleb128(buf, offset)[1]
+            yield cls.extract_dex_string(buf, offset)
+
+
+    @classmethod
+    def _read_first_bytes(cls, apk_file, num_bytes):
+        try:
+            with open(apk_file, 'rb') as fp:
+                return fp.read(num_bytes)
+        except IOError:
+            return b''
+
+    @classmethod
+    def is_zipfile(cls, apk_file_path):
+        magic = cls._read_first_bytes(apk_file_path, 2)
+        return magic == b'PK' and zipfile.is_zipfile(apk_file_path)
+
+    @classmethod
+    def enumerate_dex_strings_apk(cls, apk_file_path):
+        with zipfile.ZipFile(apk_file_path, 'r') as zip_file:
+            for name in cls.generate_classes_dex_names():
+                try:
+                    with zip_file.open(name) as dex_file:
+                        for s in cls.enumerate_dex_strings_buf(dex_file.read()):
+                            yield s
+                except KeyError:
+                    break
+
+    @classmethod
+    def is_vdex_file(cls, vdex_file_path):
+        return vdex_file_path.endswith('.vdex')
+
+    VdexHeader = create_struct('VdexHeader', (
+        ('magic', '4s'),
+        ('version', '4s'),
+        ('number_of_dex_files', 'I'),
+        ('dex_size', 'I'),
+        ('verifier_deps_size', 'I'),
+        ('quickening_info_size', 'I'),
+    ))
+
+    @classmethod
+    def enumerate_dex_strings_vdex_buf(cls, buf):
+        buf = get_py3_bytes(buf)
+        vdex_header = cls.VdexHeader.unpack_from(buf, offset=0)
+
+        quickening_table_off_size = 0
+        if vdex_header.version > b'010\x00':
+            quickening_table_off_size = 4
+
+        # Skip vdex file header size
+        offset = cls.VdexHeader.struct_size
+
+        # Skip dex file checksums size
+        offset += 4 * vdex_header.number_of_dex_files
+
+        for i in range(vdex_header.number_of_dex_files):
+            # Skip quickening_table_off size
+            offset += quickening_table_off_size
+
+            dex_header = cls.Header.unpack_from(buf, offset)
+            dex_file_end = offset + dex_header.file_size
+            dex_file_buf = buf[offset:dex_file_end]
+            for s in cls.enumerate_dex_strings_buf(dex_file_buf):
+                yield s
+            offset = (dex_file_end + 3) // 4 * 4
+
+    @classmethod
+    def enumerate_dex_strings_vdex(cls, vdex_file_path):
+            with open(vdex_file_path, 'rb') as vdex_file:
+                return cls.enumerate_dex_strings_vdex_buf(vdex_file.read())
+
 
 #------------------------------------------------------------------------------
 # TaggedDict
@@ -621,7 +957,7 @@ class ELF(object):
 class TaggedDict(object):
     def _define_tag_constants(local_ns):
         tag_list = [
-            'll_ndk', 'll_ndk_indirect', 'sp_ndk', 'sp_ndk_indirect',
+            'll_ndk', 'll_ndk_indirect',
             'vndk_sp', 'vndk_sp_indirect', 'vndk_sp_indirect_private',
             'vndk',
             'fwk_only', 'fwk_only_rs',
@@ -641,10 +977,10 @@ class TaggedDict(object):
     _define_tag_constants(locals())
     del _define_tag_constants
 
-    NDK = LL_NDK | SP_NDK
-
     _TAG_ALIASES = {
         'hl_ndk': 'fwk_only',  # Treat HL-NDK as FWK-ONLY.
+        'sp_ndk': 'll_ndk',
+        'sp_ndk_indirect': 'll_ndk_indirect',
         'vndk_indirect': 'vndk',  # Legacy
         'vndk_sp_hal': 'vndk_sp',  # Legacy
         'vndk_sp_both': 'vndk_sp',  # Legacy
@@ -659,25 +995,22 @@ class TaggedDict(object):
         return tag
 
     _LL_NDK_VIS = {'ll_ndk', 'll_ndk_indirect'}
-    _SP_NDK_VIS = {'ll_ndk', 'll_ndk_indirect', 'sp_ndk', 'sp_ndk_indirect'}
-    _VNDK_SP_VIS = {'ll_ndk', 'sp_ndk', 'vndk_sp', 'vndk_sp_indirect',
+    _VNDK_SP_VIS = {'ll_ndk', 'vndk_sp', 'vndk_sp_indirect',
                     'vndk_sp_indirect_private', 'fwk_only_rs'}
-    _FWK_ONLY_VIS = {'ll_ndk', 'll_ndk_indirect', 'sp_ndk', 'sp_ndk_indirect',
+    _FWK_ONLY_VIS = {'ll_ndk', 'll_ndk_indirect',
                      'vndk_sp', 'vndk_sp_indirect', 'vndk_sp_indirect_private',
                      'vndk', 'fwk_only', 'fwk_only_rs', 'sp_hal'}
-    _SP_HAL_VIS = {'ll_ndk', 'sp_ndk', 'vndk_sp', 'sp_hal', 'sp_hal_dep'}
+    _SP_HAL_VIS = {'ll_ndk', 'vndk_sp', 'sp_hal', 'sp_hal_dep'}
 
     _TAG_VISIBILITY = {
         'll_ndk': _LL_NDK_VIS,
         'll_ndk_indirect': _LL_NDK_VIS,
-        'sp_ndk': _SP_NDK_VIS,
-        'sp_ndk_indirect': _SP_NDK_VIS,
 
         'vndk_sp': _VNDK_SP_VIS,
         'vndk_sp_indirect': _VNDK_SP_VIS,
         'vndk_sp_indirect_private': _VNDK_SP_VIS,
 
-        'vndk': {'ll_ndk', 'sp_ndk', 'vndk_sp', 'vndk_sp_indirect', 'vndk'},
+        'vndk': {'ll_ndk', 'vndk_sp', 'vndk_sp_indirect', 'vndk'},
 
         'fwk_only': _FWK_ONLY_VIS,
         'fwk_only_rs': _FWK_ONLY_VIS,
@@ -685,13 +1018,13 @@ class TaggedDict(object):
         'sp_hal': _SP_HAL_VIS,
         'sp_hal_dep': _SP_HAL_VIS,
 
-        'vnd_only': {'ll_ndk', 'sp_ndk', 'vndk_sp', 'vndk_sp_indirect',
+        'vnd_only': {'ll_ndk', 'vndk_sp', 'vndk_sp_indirect',
                      'vndk', 'sp_hal', 'sp_hal_dep', 'vnd_only'},
 
         'remove': set(),
     }
 
-    del _LL_NDK_VIS, _SP_NDK_VIS, _VNDK_SP_VIS, _FWK_ONLY_VIS, _SP_HAL_VIS
+    del _LL_NDK_VIS, _VNDK_SP_VIS, _FWK_ONLY_VIS, _SP_HAL_VIS
 
     @classmethod
     def is_tag_visible(cls, from_tag, to_tag):
@@ -740,16 +1073,8 @@ class TaggedDict(object):
                                    self.get_path_tag(to_lib))
 
     @staticmethod
-    def is_ndk(tag_bit):
-        return bool(tag_bit & TaggedDict.NDK)
-
-    @staticmethod
     def is_ll_ndk(tag_bit):
         return bool(tag_bit & TaggedDict.LL_NDK)
-
-    @staticmethod
-    def is_sp_ndk(tag_bit):
-        return bool(tag_bit & TaggedDict.SP_NDK)
 
     @staticmethod
     def is_vndk_sp(tag_bit):
@@ -913,7 +1238,7 @@ NUM_PARTITIONS = 2
 
 SPLibResult = collections.namedtuple(
         'SPLibResult',
-        'sp_hal sp_hal_dep vndk_sp_hal sp_ndk sp_ndk_indirect '
+        'sp_hal sp_hal_dep vndk_sp_hal ll_ndk ll_ndk_indirect '
         'vndk_sp_both')
 
 
@@ -1198,16 +1523,8 @@ class ELFLinkData(object):
         self.linked_symbols = dict()
 
     @property
-    def is_ndk(self):
-        return TaggedDict.is_ndk(self._tag_bit)
-
-    @property
     def is_ll_ndk(self):
         return TaggedDict.is_ll_ndk(self._tag_bit)
-
-    @property
-    def is_sp_ndk(self):
-        return TaggedDict.is_sp_ndk(self._tag_bit)
 
     @property
     def is_vndk_sp(self):
@@ -1329,7 +1646,7 @@ def sorted_lib_path_list(libs):
     return libs
 
 _VNDK_RESULT_FIELD_NAMES = (
-        'll_ndk', 'll_ndk_indirect', 'sp_ndk', 'sp_ndk_indirect',
+        'll_ndk', 'll_ndk_indirect',
         'vndk_sp', 'vndk_sp_unused', 'vndk_sp_indirect',
         'vndk_sp_indirect_unused', 'vndk_sp_indirect_private', 'vndk',
         'vndk_indirect', 'fwk_only', 'fwk_only_rs', 'sp_hal', 'sp_hal_dep',
@@ -1662,28 +1979,25 @@ class ELFLinker(object):
         """Find all same-process HALs."""
         return set(lib for lib in self.all_libs() if lib.is_sp_hal)
 
-    def compute_sp_ndk(self):
-        """Find all SP-NDK libraries."""
-        return set(lib for lib in self.all_libs() if lib.is_sp_ndk)
 
     def compute_sp_lib(self, generic_refs, ignore_hidden_deps=False):
-        def is_ndk_or_sp_hal(lib):
-            return lib.is_ndk or lib.is_sp_hal
+        def is_ll_ndk_or_sp_hal(lib):
+            return lib.is_ll_ndk or lib.is_sp_hal
 
-        sp_ndk = self.compute_sp_ndk()
-        sp_ndk_closure = self.compute_deps_closure(
-                sp_ndk, is_ndk_or_sp_hal, ignore_hidden_deps)
-        sp_ndk_indirect = sp_ndk_closure - sp_ndk
+        ll_ndk = set(lib for lib in self.all_libs() if lib.is_ll_ndk)
+        ll_ndk_closure = self.compute_deps_closure(
+                ll_ndk, is_ll_ndk_or_sp_hal, ignore_hidden_deps)
+        ll_ndk_indirect = ll_ndk_closure - ll_ndk
 
-        def is_ndk(lib):
-            return lib.is_ndk
+        def is_ll_ndk(lib):
+            return lib.is_ll_ndk
 
         sp_hal = self.compute_predefined_sp_hal()
         sp_hal_closure = self.compute_deps_closure(
-                sp_hal, is_ndk, ignore_hidden_deps)
+                sp_hal, is_ll_ndk, ignore_hidden_deps)
 
         def is_aosp_lib(lib):
-            return (not generic_refs or \
+            return (not generic_refs or
                     generic_refs.classify_lib(lib) != GenericRefs.NEW_LIB)
 
         vndk_sp_hal = set()
@@ -1694,12 +2008,12 @@ class ELFLinker(object):
             else:
                 sp_hal_dep.add(lib)
 
-        vndk_sp_both = sp_ndk_indirect & vndk_sp_hal
-        sp_ndk_indirect -= vndk_sp_both
+        vndk_sp_both = ll_ndk_indirect & vndk_sp_hal
+        ll_ndk_indirect -= vndk_sp_both
         vndk_sp_hal -= vndk_sp_both
 
-        return SPLibResult(sp_hal, sp_hal_dep, vndk_sp_hal, sp_ndk,
-                           sp_ndk_indirect, vndk_sp_both)
+        return SPLibResult(sp_hal, sp_hal_dep, vndk_sp_hal, ll_ndk,
+                           ll_ndk_indirect, vndk_sp_both)
 
     def normalize_partition_tags(self, sp_hals, generic_refs):
         def is_system_lib_or_sp_hal(lib):
@@ -1744,9 +2058,8 @@ class ELFLinker(object):
     def compute_degenerated_vndk(self, generic_refs, tagged_paths=None,
                                  action_ineligible_vndk_sp='warn',
                                  action_ineligible_vndk='warn'):
-        # Find LL-NDK and SP-NDK libs.
+        # Find LL-NDK libs.
         ll_ndk = set(lib for lib in self.all_libs() if lib.is_ll_ndk)
-        sp_ndk = set(lib for lib in self.all_libs() if lib.is_sp_ndk)
 
         # Find pre-defined libs.
         fwk_only_rs = set(lib for lib in self.all_libs() if lib.is_fwk_only_rs)
@@ -1778,7 +2091,7 @@ class ELFLinker(object):
             return generic_refs.has_same_name_lib(lib)
 
         def is_not_sp_hal_dep(lib):
-            if lib.is_ll_ndk or lib.is_sp_ndk or lib in sp_hal:
+            if lib.is_ll_ndk or lib in sp_hal:
                 return True
             return is_aosp_lib(lib)
 
@@ -1787,8 +2100,7 @@ class ELFLinker(object):
 
         # Find VNDK-SP libs.
         def is_not_vndk_sp(lib):
-            return lib.is_ll_ndk or lib.is_sp_ndk or lib in sp_hal or \
-                   lib in sp_hal_dep
+            return lib.is_ll_ndk or lib in sp_hal or lib in sp_hal_dep
 
         follow_ineligible_vndk_sp, warn_ineligible_vndk_sp = \
                 self._parse_action_on_ineligible_lib(action_ineligible_vndk_sp)
@@ -1809,8 +2121,7 @@ class ELFLinker(object):
 
         # Find VNDK-SP-Indirect libs.
         def is_not_vndk_sp_indirect(lib):
-            return lib.is_ll_ndk or lib.is_sp_ndk or lib in vndk_sp or \
-                   lib in fwk_only_rs
+            return lib.is_ll_ndk or lib in vndk_sp or lib in fwk_only_rs
 
         vndk_sp_indirect = self.compute_deps_closure(
                 vndk_sp, is_not_vndk_sp_indirect, True)
@@ -1910,8 +2221,7 @@ class ELFLinker(object):
             return result
 
         def is_not_vndk_sp_indirect(lib):
-            return lib.is_ll_ndk or lib.is_sp_ndk or lib in vndk_sp or \
-                   lib in fwk_only_rs
+            return lib.is_ll_ndk or lib in vndk_sp or lib in fwk_only_rs
 
         candidates = collect_vndk_sp_indirect_ext(vndk_sp_ext)
         while candidates:
@@ -1921,8 +2231,7 @@ class ELFLinker(object):
         # Find VNDK libs (a.k.a. system shared libs directly used by vendor
         # partition.)
         def is_not_vndk(lib):
-            if lib.is_ll_ndk or lib.is_sp_ndk or is_vndk_sp_public(lib) or \
-               lib in fwk_only_rs:
+            if lib.is_ll_ndk or is_vndk_sp_public(lib) or lib in fwk_only_rs:
                 return True
             return lib.partition != PT_SYSTEM
 
@@ -1993,28 +2302,19 @@ class ELFLinker(object):
             vndk_ext |= candidates
             candidates = collect_vndk_ext(candidates)
 
-        # Compute LL-NDK-Indirect and SP-NDK-Indirect.
+        # Compute LL-NDK-Indirect.
         def is_not_ll_ndk_indirect(lib):
-            return lib.is_ll_ndk or is_vndk_sp(lib) or is_vndk(lib)
+            return lib.is_ll_ndk or lib.is_sp_hal or is_vndk_sp(lib) or \
+                   is_vndk_sp(lib) or is_vndk(lib)
 
         ll_ndk_indirect = self.compute_deps_closure(
                 ll_ndk, is_not_ll_ndk_indirect, True)
         ll_ndk_indirect -= ll_ndk
 
-        def is_not_sp_ndk_indirect(lib):
-            return lib.is_ll_ndk or lib.is_sp_ndk or lib.is_sp_hal or \
-                   lib in ll_ndk_indirect or is_vndk_sp(lib) or is_vndk(lib)
-
-        sp_ndk_indirect = self.compute_deps_closure(
-                sp_ndk, is_not_sp_ndk_indirect, True)
-        sp_ndk_indirect -= sp_ndk
-
         # Return the VNDK classifications.
         return VNDKResult(
                 ll_ndk=ll_ndk,
                 ll_ndk_indirect=ll_ndk_indirect,
-                sp_ndk=sp_ndk,
-                sp_ndk_indirect=sp_ndk_indirect,
                 vndk_sp=vndk_sp,
                 vndk_sp_indirect=vndk_sp_indirect,
                 # vndk_sp_indirect_private=vndk_sp_indirect_private,
@@ -2719,7 +3019,7 @@ class DepsCommand(ELFGraphCommand):
         parser.add_argument('--module-info')
 
     def main(self, args):
-        generic_refs, graph, tagged_paths, vndk_lib_dirs  = \
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
                 self.create_from_args(args)
 
         module_info = ModuleInfo.load_from_path_or_default(args.module_info)
@@ -2815,7 +3115,7 @@ class DepsClosureCommand(ELFGraphCommand):
         # Define the exclusion filter.
         if args.exclude_ndk:
             def is_excluded_libs(lib):
-                return lib.is_ndk or lib in excluded_libs
+                return lib.is_ll_ndk or lib in excluded_libs
         else:
             def is_excluded_libs(lib):
                 return lib in excluded_libs
@@ -2872,6 +3172,101 @@ class DepsUnresolvedCommand(ELFGraphCommand):
             self._dump_unresolved(lib, module_info, delimiter)
             delimiter = '\n'
 
+
+class ApkDepsCommand(ELFGraphCommand):
+    def __init__(self):
+        super(ApkDepsCommand, self).__init__(
+                'apk-deps', help='Print APK dependencies for debugging')
+
+    def add_argparser_options(self, parser):
+        super(ApkDepsCommand, self).add_argparser_options(parser)
+
+    def build_lib_names_dict(self, graph, min_name_len=6, lib_ext='.so'):
+        names = collections.defaultdict(set)
+        for lib in graph.all_libs():
+            name = os.path.basename(lib.path)
+            root, ext = os.path.splitext(name)
+
+            if ext != lib_ext:
+                continue
+
+            if not lib.elf.is_jni_lib():
+                continue
+
+            names[name].add(lib)
+            names[root].add(lib)
+
+            if root.startswith('lib') and len(root) > min_name_len:
+                # FIXME: libandroid.so is a JNI lib.  However, many apps have
+                # "android" as a constant string literal, thus "android" is
+                # skipped here to reduce the false positives.
+                #
+                # Note: It is fine to exclude libandroid.so because it is only
+                # a user of JNI and it does not define any JNI methods.
+                if root != 'libandroid':
+                    names[root[3:]].add(lib)
+        return names
+
+    def _enumerate_partition_paths(self, partition, root):
+        prefix_len = len(root) + 1
+        for base, dirs, files in os.walk(root):
+            for filename in files:
+                path = os.path.join(base, filename)
+                android_path = posixpath.join('/', partition, path[prefix_len:])
+                yield (android_path, path)
+
+    def _enumerate_paths(self, system_dirs, vendor_dirs):
+        for root in system_dirs:
+            for ap, path in self._enumerate_partition_paths('system', root):
+                yield (ap, path)
+        for root in vendor_dirs:
+            for ap, path in self._enumerate_partition_paths('vendor', root):
+                yield (ap, path)
+
+    def scan_apk_deps(self, libnames, system_dirs, vendor_dirs):
+        results = []
+
+        for ap, path in self._enumerate_paths(system_dirs, vendor_dirs):
+            # Read the dex file from various file formats
+            if DexFileReader.is_zipfile(path):
+                strs = set(DexFileReader.enumerate_dex_strings_apk(path))
+            elif DexFileReader.is_vdex_file(path):
+                strs = set(DexFileReader.enumerate_dex_strings_vdex(path))
+            else:
+                continue
+
+            # Skip the file that does not call System.loadLibrary()
+            if 'loadLibrary' not in strs:
+                continue
+
+            # Collect libraries from string tables
+            libs = set()
+            for string in strs:
+                try:
+                    libs.update(libnames[string])
+                except KeyError:
+                    pass
+
+            if libs:
+                results.append((ap, sorted_lib_path_list(libs)))
+
+        results.sort()
+        return results
+
+    def main(self, args):
+        generic_refs, graph, tagged_paths, vndk_lib_dirs = \
+                self.create_from_args(args)
+
+        libnames = self.build_lib_names_dict(graph)
+
+        for ap, paths in self.scan_apk_deps(libnames, args.system, args.vendor):
+            print(ap)
+            for path in paths:
+                print('\t' + path)
+
+        return 0
+
+
 class CheckDepCommandBase(ELFGraphCommand):
     def add_argparser_options(self, parser):
         super(CheckDepCommandBase, self).add_argparser_options(parser)
@@ -2903,9 +3298,8 @@ class CheckDepCommand(CheckDepCommandBase):
 
         vendor_libs = set(graph.lib_pt[PT_VENDOR].values())
 
-        eligible_libs = (tagged_libs.ll_ndk | tagged_libs.sp_ndk | \
-                         tagged_libs.vndk_sp | tagged_libs.vndk_sp_indirect | \
-                         tagged_libs.vndk)
+        eligible_libs = (tagged_libs.ll_ndk | tagged_libs.vndk_sp |
+                         tagged_libs.vndk_sp_indirect | tagged_libs.vndk)
 
         delimiter = ''
         for lib in sorted(vendor_libs):
@@ -2913,7 +3307,7 @@ class CheckDepCommand(CheckDepCommandBase):
 
             # Check whether vendor modules depend on extended NDK symbols.
             for dep, symbols in lib.imported_ext_symbols.items():
-                if dep.is_ndk:
+                if dep.is_ll_ndk:
                     num_errors += 1
                     bad_deps.add(dep)
                     for symbol in symbols:
@@ -2962,14 +3356,12 @@ class CheckEligibleListCommand(CheckDepCommandBase):
         """Check whether eligible sets are self-contained."""
         num_errors = 0
 
-        indirect_libs = (tagged_libs.ll_ndk_indirect | \
-                         tagged_libs.sp_ndk_indirect | \
-                         tagged_libs.vndk_sp_indirect_private | \
+        indirect_libs = (tagged_libs.ll_ndk_indirect |
+                         tagged_libs.vndk_sp_indirect_private |
                          tagged_libs.fwk_only_rs)
 
-        eligible_libs = (tagged_libs.ll_ndk | tagged_libs.sp_ndk | \
-                         tagged_libs.vndk_sp | tagged_libs.vndk_sp_indirect | \
-                         tagged_libs.vndk)
+        eligible_libs = (tagged_libs.ll_ndk | tagged_libs.vndk_sp |
+                         tagged_libs.vndk_sp_indirect | tagged_libs.vndk)
 
         # Check eligible vndk is self-contained.
         delimiter = ''
@@ -3119,6 +3511,7 @@ def main():
     register_subcmd(DepsClosureCommand())
     register_subcmd(DepsInsightCommand())
     register_subcmd(DepsUnresolvedCommand())
+    register_subcmd(ApkDepsCommand())
     register_subcmd(CheckDepCommand())
     register_subcmd(CheckEligibleListCommand())
     register_subcmd(DepGraphCommand())
