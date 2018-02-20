@@ -3,6 +3,8 @@
 import tempfile
 import os
 import subprocess
+import gzip
+import shutil
 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 AOSP_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, *['..'] * 5))
@@ -21,6 +23,9 @@ EXPORTED_HEADERS_DIR = (
 SO_EXT = '.so'
 SOURCE_ABI_DUMP_EXT_END = '.lsdump'
 SOURCE_ABI_DUMP_EXT = SO_EXT + SOURCE_ABI_DUMP_EXT_END
+
+DEFAULT_CPPFLAGS = ['-x', 'c++', '-std=c++11']
+DEFAULT_CFLAGS = ['-std=gnu99']
 
 TARGET_ARCHS = ['arm', 'arm64', 'x86', 'x86_64', 'mips', 'mips64']
 
@@ -45,11 +50,11 @@ def copy_reference_dumps(lib_paths, reference_dir_stem,
 
 def copy_reference_dump(lib_path, reference_dump_dir):
     reference_dump_path = os.path.join(reference_dump_dir,
-                                       os.path.basename(lib_path))
+                                       os.path.basename(lib_path)) + '.gz'
     os.makedirs(os.path.dirname(reference_dump_path), exist_ok=True)
     output_content = read_output_content(lib_path, AOSP_DIR)
-    with open(reference_dump_path, 'w') as f:
-        f.write(output_content)
+    with gzip.open(reference_dump_path, 'wb') as f:
+        f.write(bytes(output_content, 'utf-8'))
     print('Created abi dump at ', reference_dump_path)
     return reference_dump_path
 
@@ -64,6 +69,7 @@ def copy_reference_dump_content(lib_name, output_content,
     os.makedirs(os.path.dirname(reference_dump_path), exist_ok=True)
     with open(reference_dump_path, 'w') as f:
         f.write(output_content)
+
     print('Created abi dump at ', reference_dump_path)
     return reference_dump_path
 
@@ -85,11 +91,17 @@ def run_header_abi_dumper(input_path, remove_absolute_paths, cflags=[],
 
 def run_header_abi_dumper_on_file(input_path, output_path,
                                   export_include_dirs = [], cflags =[]):
+    input_name, input_ext = os.path.splitext(input_path)
     cmd = ['header-abi-dumper', '-o', output_path, input_path,]
     for dir in export_include_dirs:
         cmd += ['-I', dir]
     cmd += ['--']
     cmd += cflags
+    if input_ext == '.cpp' or input_ext == '.cc' or input_ext == '.h':
+        cmd += DEFAULT_CPPFLAGS
+    else:
+        cmd += DEFAULT_CFLAGS
+
     for dir in BUILTIN_HEADERS_DIR:
         cmd += ['-isystem', dir]
     # export includes imply local includes
