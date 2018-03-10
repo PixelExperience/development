@@ -1,5 +1,7 @@
+#!/bin/bash -ex
+
 #
-# Copyright (C) 2016 The Android Open Source Project
+# Copyright (C) 2018 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,18 +16,5 @@
 # limitations under the License.
 #
 
-LOCAL_PATH:= $(call my-dir)
-include $(CLEAR_VARS)
-
-LOCAL_MODULE_TAGS := tests
-
-LOCAL_SRC_FILES := $(call all-java-files-under, src)
-
-LOCAL_PACKAGE_NAME := ApkCacheTest
-LOCAL_PRIVATE_PLATFORM_APIS := true
-
-LOCAL_CERTIFICATE := shared
-
-LOCAL_PROGUARD_ENABLED := disabled
-
-include $(BUILD_PACKAGE)
+python3 -m unittest discover "$@"
+python -m unittest discover "$@"
