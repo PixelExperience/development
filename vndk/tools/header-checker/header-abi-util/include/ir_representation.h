@@ -608,15 +608,21 @@ class GlobalVarIR: public LinkableMessageIR , public ReferencesOtherType {
 
 class ParamIR : public ReferencesOtherType {
  public:
-  ParamIR(const std::string &type, bool is_default) :
-    ReferencesOtherType(type) , is_default_(is_default) {}
+  ParamIR(const std::string &type, bool is_default, bool is_this_ptr) :
+    ReferencesOtherType(type) , is_default_(is_default),
+    is_this_ptr_(is_this_ptr) {}
 
   bool GetIsDefault() const {
     return is_default_;
   }
 
+  bool GetIsThisPtr() const {
+    return is_this_ptr_;
+  }
+
  protected:
   bool is_default_ = false;
+  bool is_this_ptr_ = false;
 };
 
 class CFunctionLikeIR {
@@ -770,7 +776,7 @@ inline std::string GetReferencedTypeMapKey<QualifiedTypeIR>(
 
 inline std::string GetODRListMapKey(const RecordTypeIR *record_type_ir) {
   if (record_type_ir->IsAnonymous()) {
-    return record_type_ir->GetLinkerSetKey();
+    return record_type_ir->GetLinkerSetKey() + record_type_ir->GetUniqueId();
   }
   return record_type_ir->GetUniqueId() + record_type_ir->GetSourceFile();
 }
