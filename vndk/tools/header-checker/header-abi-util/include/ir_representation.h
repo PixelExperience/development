@@ -259,8 +259,8 @@ class CXXBaseSpecifierIR : public ReferencesOtherType {
   }
 
  protected:
-  bool is_virtual_;
-  AccessSpecifierIR access_;
+  bool is_virtual_ = false;
+  AccessSpecifierIR access_ = AccessSpecifierIR::PublicAccess;
 };
 
 class TemplateElementIR : public ReferencesOtherType {
@@ -334,7 +334,7 @@ class RecordFieldIR : public ReferencesOtherType {
  protected:
   std::string name_;
   uint64_t offset_ = 0;
-  AccessSpecifierIR access_;
+  AccessSpecifierIR access_ = AccessSpecifierIR::PublicAccess;
 };
 
 class RecordTypeIR: public TypeIR, public TemplatedArtifactIR,
@@ -420,8 +420,8 @@ class RecordTypeIR: public TypeIR, public TemplatedArtifactIR,
   std::vector<RecordFieldIR> fields_;
   VTableLayoutIR vtable_layout_;
   std::vector<CXXBaseSpecifierIR> bases_;
-  AccessSpecifierIR access_;
-  bool is_anonymous_;
+  AccessSpecifierIR access_ = AccessSpecifierIR::PublicAccess;
+  bool is_anonymous_ = false;
   RecordKind record_kind_;
 };
 
@@ -482,7 +482,7 @@ class EnumTypeIR : public TypeIR, public TagTypeIR {
  protected:
   std::vector<EnumFieldIR> fields_;
   std::string underlying_type_;
-  AccessSpecifierIR access_;
+  AccessSpecifierIR access_ = AccessSpecifierIR::PublicAccess;
 };
 
 class ArrayTypeIR : public TypeIR {
@@ -593,6 +593,10 @@ class GlobalVarIR: public LinkableMessageIR , public ReferencesOtherType {
     return name_;
   }
 
+  void SetAccess(AccessSpecifierIR access) {
+    access_ = access;
+  }
+
   AccessSpecifierIR GetAccess() const {
     return access_;
   }
@@ -603,20 +607,26 @@ class GlobalVarIR: public LinkableMessageIR , public ReferencesOtherType {
 
  protected:
   std::string name_;
-  AccessSpecifierIR access_;
+  AccessSpecifierIR access_ = AccessSpecifierIR::PublicAccess;
 };
 
 class ParamIR : public ReferencesOtherType {
  public:
-  ParamIR(const std::string &type, bool is_default) :
-    ReferencesOtherType(type) , is_default_(is_default) {}
+  ParamIR(const std::string &type, bool is_default, bool is_this_ptr) :
+    ReferencesOtherType(type) , is_default_(is_default),
+    is_this_ptr_(is_this_ptr) {}
 
   bool GetIsDefault() const {
     return is_default_;
   }
 
+  bool GetIsThisPtr() const {
+    return is_this_ptr_;
+  }
+
  protected:
   bool is_default_ = false;
+  bool is_this_ptr_ = false;
 };
 
 class CFunctionLikeIR {
@@ -678,7 +688,7 @@ class FunctionIR : public LinkableMessageIR, public TemplatedArtifactIR,
  protected:
   std::string linkage_name_;
   std::string name_;
-  AccessSpecifierIR access_;
+  AccessSpecifierIR access_ = AccessSpecifierIR::PublicAccess;
 };
 
 class ElfSymbolIR {
@@ -770,7 +780,7 @@ inline std::string GetReferencedTypeMapKey<QualifiedTypeIR>(
 
 inline std::string GetODRListMapKey(const RecordTypeIR *record_type_ir) {
   if (record_type_ir->IsAnonymous()) {
-    return record_type_ir->GetLinkerSetKey();
+    return record_type_ir->GetLinkerSetKey() + record_type_ir->GetUniqueId();
   }
   return record_type_ir->GetUniqueId() + record_type_ir->GetSourceFile();
 }

@@ -56,7 +56,7 @@ bool HeaderASTVisitor::VisitRecordDecl(const clang::RecordDecl *decl) {
     return true;
   }
   RecordDeclWrapper record_decl_wrapper(
-      mangle_contextp_, ast_contextp_, cip_, decl, ir_dumper_, "", ast_caches_);
+      mangle_contextp_, ast_contextp_, cip_, decl, ir_dumper_, ast_caches_);
   return record_decl_wrapper.GetRecordDecl();
 }
 
@@ -93,6 +93,10 @@ static bool AddMangledFunctions(const abi_util::FunctionIR *function,
 
 static bool ShouldSkipFunctionDecl(const clang::FunctionDecl *decl) {
   if (!decl->getDefinition()) {
+    return true;
+  }
+  if (decl->getLinkageAndVisibility().getLinkage() !=
+      clang::Linkage::ExternalLinkage) {
     return true;
   }
   if (const clang::CXXMethodDecl *method_decl =

@@ -37,7 +37,7 @@ void ProtobufTextFormatToIRReader::ReadTypeInfo(
     const abi_dump::BasicNamedAndTypedDecl &type_info,
     TypeIR *typep) {
   typep->SetLinkerSetKey(type_info.linker_set_key());
-  typep->SetName(type_info.linker_set_key());
+  typep->SetName(type_info.name());
   typep->SetSourceFile(type_info.source_file());
   typep->SetReferencedType(type_info.referenced_type());
   typep->SetSelfType(type_info.self_type());
@@ -87,7 +87,8 @@ static void SetupCFunctionLikeIR(const T &cfunction_like_protobuf,
                                  CFunctionLikeIR *cfunction_like_ir) {
   cfunction_like_ir->SetReturnType(cfunction_like_protobuf.return_type());
   for (auto &&parameter: cfunction_like_protobuf.parameters()) {
-    ParamIR param_ir(parameter.referenced_type(), parameter.default_arg());
+    ParamIR param_ir(parameter.referenced_type(), parameter.default_arg(),
+                     false);
     cfunction_like_ir->AddParameter(std::move(param_ir));
   }
 }
@@ -102,7 +103,8 @@ FunctionIR ProtobufTextFormatToIRReader::FunctionProtobufToIR(
   function_ir.SetSourceFile(function_protobuf.source_file());
   // Set parameters
   for (auto &&parameter: function_protobuf.parameters()) {
-    ParamIR param_ir(parameter.referenced_type(), parameter.default_arg());
+    ParamIR param_ir(parameter.referenced_type(), parameter.default_arg(),
+                     parameter.is_this_ptr());
     function_ir.AddParameter(std::move(param_ir));
   }
   // Set Template info
@@ -208,6 +210,7 @@ void ProtobufTextFormatToIRReader::ReadGlobalVariables(
   for (auto &&global_variable_protobuf : tu.global_vars()) {
     GlobalVarIR global_variable_ir;
     global_variable_ir.SetName(global_variable_protobuf.name());
+    global_variable_ir.SetAccess(AccessProtobufToIR(global_variable_protobuf.access()));
     global_variable_ir.SetSourceFile(global_variable_protobuf.source_file());
     global_variable_ir.SetReferencedType(
         global_variable_protobuf.referenced_type());
@@ -570,6 +573,7 @@ bool IRToProtobufConverter::AddFunctionParameters(
     added_parameter->set_referenced_type(
         parameter.GetReferencedType());
     added_parameter->set_default_arg(parameter.GetIsDefault());
+    added_parameter->set_is_this_ptr(parameter.GetIsThisPtr());
   }
   return true;
 }
