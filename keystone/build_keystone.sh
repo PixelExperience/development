@@ -1,15 +1,30 @@
 #!/bin/bash
 
-TARGET=$1
+readonly ANDROID_TARGET=$1
+readonly BUILD_DIR=$2
+shift
+shift
+readonly BUILD_COMMAND="$@"
 
-if [ -z $TARGET ]; then
-  echo "error: target not set"
+if [[ -z "${ANDROID_TARGET}" ]]; then
+  echo "error: Android target not set"
   exit 1
 fi
 
-# TODO(diegowilson): do we still need this export?
+if [[ -z "${BUILD_DIR}" ]]; then
+  echo "error: Build directory not set"
+  exit 1
+fi
+
+if [[ -z "${BUILD_COMMAND}" ]]; then
+  echo "error: Build command not set"
+  exit 1
+fi
+
+set -e
+
 export PATH
-cd /src
 source build/envsetup.sh
-lunch $TARGET
-make -j droid showcommands dist platform_tests
+lunch "$ANDROID_TARGET"
+cd "$BUILD_DIR"
+$BUILD_COMMAND
