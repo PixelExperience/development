@@ -12,8 +12,8 @@ import nsjail
 class NsjailTest(unittest.TestCase):
 
   @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.call')
-  def testMinimalParameters(self, mock_call, mock_dirname):
+  @mock.patch('nsjail.subprocess.check_call')
+  def testMinimalParameters(self, mock_check_call, mock_dirname):
     del mock_dirname
     nsjail.run(
         nsjail_bin='/bin/nsjail',
@@ -21,7 +21,7 @@ class NsjailTest(unittest.TestCase):
         source_dir='/source_dir',
         command=['/bin/bash'],
         android_target='target_name')
-    mock_call.assert_called_with([
+    mock_check_call.assert_called_with([
         '/bin/nsjail',
         '--bindmount', '/source_dir:/src',
         '--chroot', '/chroot',
@@ -31,8 +31,8 @@ class NsjailTest(unittest.TestCase):
     ])
 
   @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.call')
-  def testDist(self, mock_call, mock_dirname):
+  @mock.patch('nsjail.subprocess.check_call')
+  def testDist(self, mock_check_call, mock_dirname):
     del mock_dirname
     nsjail.run(
         nsjail_bin='/bin/nsjail',
@@ -41,7 +41,7 @@ class NsjailTest(unittest.TestCase):
         command=['/bin/bash'],
         android_target='target_name',
         dist_dir='/dist_dir')
-    mock_call.assert_called_with([
+    mock_check_call.assert_called_with([
         '/bin/nsjail',
         '--bindmount', '/source_dir:/src',
         '--chroot', '/chroot',
@@ -53,8 +53,8 @@ class NsjailTest(unittest.TestCase):
     ])
 
   @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.call')
-  def testBuildID(self, mock_call, mock_dirname):
+  @mock.patch('nsjail.subprocess.check_call')
+  def testBuildID(self, mock_check_call, mock_dirname):
     del mock_dirname
     nsjail.run(
         nsjail_bin='/bin/nsjail',
@@ -63,7 +63,7 @@ class NsjailTest(unittest.TestCase):
         command=['/bin/bash'],
         android_target='target_name',
         build_id='0')
-    mock_call.assert_called_with([
+    mock_check_call.assert_called_with([
         '/bin/nsjail',
         '--bindmount', '/source_dir:/src',
         '--chroot', '/chroot',
@@ -74,8 +74,8 @@ class NsjailTest(unittest.TestCase):
     ])
 
   @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.call')
-  def testMaxCPU(self, mock_call, mock_dirname):
+  @mock.patch('nsjail.subprocess.check_call')
+  def testMaxCPU(self, mock_check_call, mock_dirname):
     del mock_dirname
     nsjail.run(
         nsjail_bin='/bin/nsjail',
@@ -84,7 +84,7 @@ class NsjailTest(unittest.TestCase):
         command=['/bin/bash'],
         android_target='target_name',
         max_cpus=1)
-    mock_call.assert_called_with([
+    mock_check_call.assert_called_with([
         '/bin/nsjail',
         '--bindmount', '/source_dir:/src',
         '--chroot', '/chroot',
@@ -98,14 +98,12 @@ class NsjailTest(unittest.TestCase):
   @mock.patch('nsjail.os.setuid')
   @mock.patch('nsjail.os.path.dirname', return_value='/')
   @mock.patch('nsjail.subprocess.check_call')
-  @mock.patch('nsjail.subprocess.call')
   def testUserGroupID(self,
-                      mock_call,
                       mock_check_call,
                       mock_dirname,
                       mock_setuid,
                       mock_setgid):
-    del mock_check_call, mock_dirname, mock_setuid, mock_setgid
+    del mock_dirname, mock_setuid, mock_setgid
     nsjail.run(
         nsjail_bin='/bin/nsjail',
         chroot='/chroot',
@@ -114,7 +112,7 @@ class NsjailTest(unittest.TestCase):
         android_target='target_name',
         user_id=1,
         group_id=2)
-    mock_call.assert_called_with([
+    mock_check_call.assert_called_with([
         '/bin/nsjail',
         '--bindmount', '/source_dir:/src',
         '--chroot', '/chroot',

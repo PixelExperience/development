@@ -91,7 +91,7 @@ def run(nsjail_bin,
 
   print('NsJail command:')
   print(' '.join(nsjail_command))
-  subprocess.call(nsjail_command)
+  subprocess.check_call(nsjail_command)
 
   # Strip out overlay
   del overlay
