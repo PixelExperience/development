@@ -18,7 +18,7 @@ class Overlay(object):
       'sdm660_64': 'qcom-LA.UM.7.2-incoming',
   }
 
-  def _apply(self):
+  def _apply(self, source_dir, overlay_dir):
     """Applies the selected overlay directory.
 
     OverlayFS creates a merge directory composed of a union
@@ -32,14 +32,19 @@ class Overlay(object):
 
     workdir is a temporary working cache required by OverlayFS.
     This is located in overlays/work.
+
+    Args:
+      source_dir: A string with the path to the Android platform source.
+      overlay_dir: A string with the path to the overlay directory to
+        apply.
     """
     lowerdirs = [
-        self.overlay_dir,
-        self.source_dir,
+        overlay_dir,
+        source_dir,
     ]
-    workdir = os.path.join(self.source_dir, 'overlays', 'work')
+    workdir = os.path.join(source_dir, 'overlays', 'work')
 
-    upperdir = os.path.join(self.source_dir, 'overlays', 'artifacts')
+    upperdir = os.path.join(source_dir, 'overlays', 'artifacts')
 
     if not os.path.isdir(workdir):
       os.mkdir(workdir)
@@ -55,17 +60,24 @@ class Overlay(object):
         '--types', 'overlay',
         '--options', mount_options,
         'overlay',
-        self.source_dir
+        source_dir
     ]
     subprocess.check_call(command)
+    # Only save the source directories until
+    # we have succesfully applied the overlay to avoid
+    # attempting an unmount if the mount failed.
+    self.source_dir = source_dir
+    self.overlay_dir = overlay_dir
     print('Applied overlay ' + self.overlay_dir)
 
   def _strip(self):
     """Strips out all applied overlays.
     """
-    command = ['sudo', 'umount', os.path.abspath(self.source_dir)]
-    subprocess.check_call(command)
-    print('Stripped out overlay ' + self.overlay_dir)
+    if self.source_dir:
+      command = ['sudo', 'umount', os.path.abspath(self.source_dir)]
+      subprocess.check_call(command)
+    if self.overlay_dir:
+      print('Stripped out overlay ' + self.overlay_dir)
 
   def __init__(self, target, source_dir):
     """Inits Overlay with the details of what is going to be overlaid.
@@ -74,18 +86,19 @@ class Overlay(object):
       target: A string with the name of the target to be prepared.
       source_dir: A string with the path to the Android platform source.
     """
-    self.source_dir = source_dir
+    self.source_dir = None
+    self.overlay_dir = None
     branch = self.BRANCH_MAP[target]
-    self.overlay_dir = os.path.join(self.source_dir, 'overlays', branch)
+    overlay_dir = os.path.join(source_dir, 'overlays', branch)
 
     # Create an empty overlays file to white out overlays dir.
     # Otherwise the build system will try to detect all
     # the Android.bp and Android.mk modules under the overlays
     # dir and conflict with the ovelays applied at the top.
-    overlay_whiteout = os.path.join(self.overlay_dir, 'overlays')
+    overlay_whiteout = os.path.join(overlay_dir, 'overlays')
     open(overlay_whiteout, 'a').close()
 
-    self._apply()
+    self._apply(source_dir, overlay_dir)
 
   def __del__(self):
     """Cleans up Overlay.

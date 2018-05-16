@@ -33,3 +33,15 @@ process isolation.
 
 By using OverlayFS we're able to dynamically select from multiple vendor project
 sets within the same source tree. This is implemented in overlay.py.
+
+## Testing
+
+To run a test follow the instructions below
+
+```
+python -m virtualenv env
+source env/bin/activate
+pip install mock
+# Now run any test module. For example:
+python overlay_test.py
+```
