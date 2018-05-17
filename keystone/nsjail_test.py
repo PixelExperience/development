@@ -4,122 +4,154 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
+import subprocess
 import unittest
-import mock
 import nsjail
 
 
 class NsjailTest(unittest.TestCase):
 
-  @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.check_call')
-  def testMinimalParameters(self, mock_check_call, mock_dirname):
-    del mock_dirname
-    nsjail.run(
-        nsjail_bin='/bin/nsjail',
+  def setUp(self):
+    nsjail.__file__ = '/'
+
+  def testMinimalParameters(self):
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
         chroot='/chroot',
         source_dir='/source_dir',
         command=['/bin/bash'],
         android_target='target_name')
-    mock_check_call.assert_called_with([
-        '/bin/nsjail',
-        '--bindmount', '/source_dir:/src',
-        '--chroot', '/chroot',
-        '--env', 'USER=android-build',
-        '--config', '/nsjail.cfg',
-        '--', '/bin/bash'
-    ])
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/source_dir:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--', '/bin/bash'
+            ]
+        ]
+    )
 
-  @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.check_call')
-  def testDist(self, mock_check_call, mock_dirname):
-    del mock_dirname
-    nsjail.run(
-        nsjail_bin='/bin/nsjail',
+  def testFailingJailedCommand(self):
+    with self.assertRaises(subprocess.CalledProcessError):
+      nsjail.run(
+          nsjail_bin='/bin/false',
+          chroot='/chroot',
+          source_dir='/source_dir',
+          command=['/bin/bash'],
+          android_target='target_name')
+
+  def testDist(self):
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
         chroot='/chroot',
         source_dir='/source_dir',
         command=['/bin/bash'],
         android_target='target_name',
         dist_dir='/dist_dir')
-    mock_check_call.assert_called_with([
-        '/bin/nsjail',
-        '--bindmount', '/source_dir:/src',
-        '--chroot', '/chroot',
-        '--env', 'USER=android-build',
-        '--config', '/nsjail.cfg',
-        '--bindmount', '/dist_dir:/dist',
-        '--env', 'DIST_DIR=/dist',
-        '--', '/bin/bash'
-    ])
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/source_dir:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--bindmount', '/dist_dir:/dist',
+                '--env', 'DIST_DIR=/dist',
+                '--', '/bin/bash'
+            ]
+        ]
+    )
 
-  @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.check_call')
-  def testBuildID(self, mock_check_call, mock_dirname):
-    del mock_dirname
-    nsjail.run(
-        nsjail_bin='/bin/nsjail',
+  def testBuildID(self):
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
         chroot='/chroot',
         source_dir='/source_dir',
         command=['/bin/bash'],
         android_target='target_name',
         build_id='0')
-    mock_check_call.assert_called_with([
-        '/bin/nsjail',
-        '--bindmount', '/source_dir:/src',
-        '--chroot', '/chroot',
-        '--env', 'USER=android-build',
-        '--config', '/nsjail.cfg',
-        '--env', 'BUILD_NUMBER=0',
-        '--', '/bin/bash'
-    ])
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/source_dir:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--env', 'BUILD_NUMBER=0',
+                '--', '/bin/bash'
+            ]
+        ]
+    )
 
-  @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.check_call')
-  def testMaxCPU(self, mock_check_call, mock_dirname):
-    del mock_dirname
-    nsjail.run(
-        nsjail_bin='/bin/nsjail',
+  def testMaxCPU(self):
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
         chroot='/chroot',
         source_dir='/source_dir',
         command=['/bin/bash'],
         android_target='target_name',
         max_cpus=1)
-    mock_check_call.assert_called_with([
-        '/bin/nsjail',
-        '--bindmount', '/source_dir:/src',
-        '--chroot', '/chroot',
-        '--env', 'USER=android-build',
-        '--config', '/nsjail.cfg',
-        '--max_cpus=1',
-        '--', '/bin/bash'
-    ])
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/source_dir:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--max_cpus=1',
+                '--', '/bin/bash'
+            ]
+        ]
+    )
 
-  @mock.patch('nsjail.os.setgid')
-  @mock.patch('nsjail.os.setuid')
-  @mock.patch('nsjail.os.path.dirname', return_value='/')
-  @mock.patch('nsjail.subprocess.check_call')
-  def testUserGroupID(self,
-                      mock_check_call,
-                      mock_dirname,
-                      mock_setuid,
-                      mock_setgid):
-    del mock_dirname, mock_setuid, mock_setgid
-    nsjail.run(
-        nsjail_bin='/bin/nsjail',
+  def testUserGroupID(self):
+    nsjail.GROUPADD_COMMAND = '/bin/true'
+    nsjail.USERADD_COMMAND = '/bin/true'
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
         chroot='/chroot',
         source_dir='/source_dir',
         command=['/bin/bash'],
         android_target='target_name',
-        user_id=1,
-        group_id=2)
-    mock_check_call.assert_called_with([
-        '/bin/nsjail',
-        '--bindmount', '/source_dir:/src',
-        '--chroot', '/chroot',
-        '--env', 'USER=android-build',
-        '--config', '/nsjail.cfg',
-        '--', '/bin/bash'
-    ])
+        user_id=os.getuid(),
+        group_id=os.getgid())
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                'android-build',
+                '--gid', str(os.getgid()),
+            ],
+            [
+                '/bin/true',
+                '--gid', 'android-build',
+                '--groups', 'sudo',
+                '--uid', str(os.getuid()),
+                '--create-home',
+                'android-build'
+            ],
+            [
+                '/bin/true',
+                '--bindmount', '/source_dir:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--', '/bin/bash'
+            ]
+        ]
+    )
 
 
 if __name__ == '__main__':
