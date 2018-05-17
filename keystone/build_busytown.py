@@ -82,6 +82,7 @@ def parse_args():
   # Convert the Namespace object to a dict
   return vars(parser.parse_args())
 
+
 def build_target(android_target):
   args = parse_args()
   build(android_target=android_target, **args)

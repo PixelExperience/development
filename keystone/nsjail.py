@@ -36,9 +36,9 @@ def run(nsjail_bin,
         source_dir,
         command,
         android_target,
-        dist_dir,
-        build_id,
-        max_cpus,
+        dist_dir=None,
+        build_id=None,
+        max_cpus=None,
         user_id=None,
         group_id=None):
   """Run inside an NsJail sandbox.
@@ -91,7 +91,7 @@ def run(nsjail_bin,
 
   print('NsJail command:')
   print(' '.join(nsjail_command))
-  subprocess.call(nsjail_command)
+  subprocess.check_call(nsjail_command)
 
   # Strip out overlay
   del overlay
