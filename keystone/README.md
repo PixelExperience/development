@@ -4,9 +4,32 @@ This folder contains scripts used for building the keystone branch.
 Most developers just need to do the following:
 
 ```
-development/keystone/container_run.sh
+python development/keystone/container.py
 export PATH
 source build/envsetup.sh
 lunch sdm845-userdebug
 make -j
 ```
+
+## Busytown builds
+
+Busytown builds (aka go/ab) invoke the ```build_busytown_*.py``` scripts contained
+in this directory. These builds support NsJail but not docker containers.
+Instead they provide a chroot with all the Android build host dependencies.
+
+## Docker container builds
+
+Google platform engineers build inside a docker container. The container.py
+script in this directory sets up such container. The dockerfile for the
+container is also provided.
+
+## NsJail sandbox
+
+Both Busytown builds and Docker container builds create an NsJail sandbox via
+nsjail.py and nsjail.cfg. The purpose of the sandbox is to provide secure
+process isolation.
+
+## Vendor overlays
+
+By using OverlayFS we're able to dynamically select from multiple vendor project
+sets within the same source tree. This is implemented in overlay.py.

@@ -1,0 +1,83 @@
+FROM ubuntu:14.04
+
+RUN apt-get update
+
+# AOSP dependencies from https://source.android.com/setup/initializing
+RUN apt-get install -y \
+  bison \
+  build-essential \
+  ccache \
+  curl \
+  flex \
+  g++-multilib \
+  gcc-multilib \
+  git-core \
+  gnupg \
+  gperf \
+  lib32ncurses5-dev \
+  lib32z-dev \
+  libc6-dev-i386 \
+  libgl1-mesa-dev \
+  libx11-dev \
+  libxml2-utils \
+  unzip \
+  x11proto-core-dev \
+  xsltproc \
+  zip \
+  zlib1g-dev
+
+# Additional googleplex master dependencies in go/howdoiandroid
+RUN apt-get install -y \
+  liblz4-tool
+
+# Android requires python2.7
+# TODO(diegowilson): why didn't this come with the default trusty build?
+RUN apt-get install -y \
+  python2.7
+
+# Add missing python symbolic links
+# TODO(diegowilson): investigate the right way to setup python defaults
+RUN ln --symbolic /usr/bin/python2.7 /usr/bin/python
+RUN ln --symbolic /usr/bin/python2.7 /usr/bin/python2
+
+# Qualcomm specific dependencies
+# Required to build the kernel:
+#   bc for /usr/bin/bc
+#   libssl-dev for /usr/include/openssl
+# Required to build OTA package:
+#   openssl for /usr/bin/openssl
+#   bsdmainutils for /usr/bin/hexdump
+RUN apt-get install -y \
+  bc \
+  bsdmainutils \
+  libssl-dev \
+  libxml-simple-perl \
+  openssl
+
+# Install NsJail
+RUN apt-get install -y \
+    autoconf \
+    bison \
+    flex \
+    gcc \
+    g++ \
+    git \
+    libprotobuf-dev \
+    libtool \
+    make \
+    pkg-config \
+    protobuf-compiler
+
+RUN git clone --depth=1 https://github.com/google/nsjail.git
+
+RUN make --directory=/nsjail && mv /nsjail/nsjail /bin && rm -rf -- /nsjail
+
+COPY nsjail.cfg /usr/share/android-build.cfg
+
+COPY etc/sudoers.d/android-build /etc/sudoers.d/android-build
+
+# Install repo as instructed in
+# https://source.android.com/setup/downloading#installing-repo
+RUN curl https://storage.googleapis.com/git-repo-downloads/repo > \
+    /usr/bin/repo && \
+  chmod a+rx /usr/bin/repo
