@@ -1,6 +1,23 @@
 # Keystone
 
 This folder contains scripts used for building the keystone branch.
+
+## Setup
+
+The keystone builder image provides all the host dependencies
+you need to build Android. To set it up follow the instructions
+below.
+
+1. [Install Docker CE](https://www.docker.com/community-edition)
+
+1. Build the Android build container:
+
+   ```
+   docker build --tag android-build development/keystone
+   ```
+
+## Building
+
 Most developers just need to do the following:
 
 ```
