@@ -8,7 +8,7 @@ import argparse
 import os
 import subprocess
 
-_IMAGE = 'gcr.io/google.com/android-keystone-182020/android-build'
+_IMAGE = 'android-build'
 
 
 def run(container_command, android_target):
