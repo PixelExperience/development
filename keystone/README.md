@@ -28,6 +28,16 @@ lunch sdm845-userdebug
 make -j
 ```
 
+If you would like to build a target other than the default target then:
+
+```
+python development/keystone/container.py --android_target sdm660_64
+export PATH
+source build/envsetup.sh
+lunch sdm660_64-userdebug
+make -j
+```
+
 ## Busytown builds
 
 Busytown builds (aka go/ab) invoke the ```build_busytown_*.py``` scripts contained
