@@ -21,6 +21,10 @@ def build(android_target, nsjail_bin, chroot, dist_dir, build_id, max_cpus):
     dist_dir: A string with the path to the Android dist directory.
     build_id: A string with the Android build identifier.
     max_cpus: An integer with maximum number of CPUs.
+
+  Returns:
+    A list of commands that were executed. Each command is a list of strings.
+
   """
   # All busytown builds run with the root of the
   # Android source tree as the current directory.
@@ -31,7 +35,7 @@ def build(android_target, nsjail_bin, chroot, dist_dir, build_id, max_cpus):
       '/src',
       'make', '-j', 'droid', 'showcommands', 'dist', 'platform_tests'
   ]
-  nsjail.run(
+  return nsjail.run(
       nsjail_bin=nsjail_bin,
       chroot=chroot,
       source_dir=source_dir,
