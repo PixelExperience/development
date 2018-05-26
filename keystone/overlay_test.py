@@ -57,6 +57,8 @@ class OverlayTest(unittest.TestCase):
     os.mkdir(os.path.join(self.source_dir, 'overlays'))
     os.mkdir(os.path.join(self.source_dir,
                           'overlays', 'qcom-LA.UM.7.3-incoming'))
+    os.mkdir(os.path.join(self.source_dir,
+                          'overlays', 'gms'))
 
   def tearDown(self):
     shutil.rmtree(self.source_dir)
@@ -67,6 +69,22 @@ class OverlayTest(unittest.TestCase):
         source_dir=self.source_dir)
     self.assertIsNotNone(o)
     mounts = o.GetMountInfo()
+    mount_commands = [mount['mount_command'] for mount in mounts]
+    self.assertIn(
+        [
+            'sudo', 'mount',
+            '--types', 'overlay',
+            '--options',
+            'lowerdir=%s/overlays/qcom-LA.UM.7.3-incoming:%s/overlays/gms:%s,'
+            'upperdir=%s/out/overlays/sdm845/artifacts,'
+            'workdir=%s/out/overlays/sdm845/work'
+            % (self.source_dir, self.source_dir, self.source_dir,
+               self.source_dir, self.source_dir),
+            'overlay',
+            self.source_dir
+        ],
+        mount_commands
+    )
     unmount_commands = [mount['unmount_command'] for mount in mounts]
     self.assertIn(
         ['sudo', 'umount', os.path.join(self.source_dir)],
@@ -81,7 +99,7 @@ class OverlayTest(unittest.TestCase):
     with self.assertRaises(KeyError):
       overlay.Overlay(
           target='unknown',
-          source_dir='/source_dir')
+          source_dir=self.source_dir)
 
 
 if __name__ == '__main__':
