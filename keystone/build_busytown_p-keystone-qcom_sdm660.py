@@ -3,4 +3,4 @@
 
 import build_busytown
 
-build_busytown.build_target('sdm660_64')
+build_busytown.build_target('sdm660_64', 'userdebug')
