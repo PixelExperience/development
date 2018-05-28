@@ -74,6 +74,8 @@ RUN make --directory=/nsjail && mv /nsjail/nsjail /bin && rm -rf -- /nsjail
 
 COPY nsjail.cfg /usr/share/android-build.cfg
 
+RUN chmod a+r /usr/share/android-build.cfg
+
 COPY etc/sudoers.d/android-build /etc/sudoers.d/android-build
 
 # Install repo as instructed in

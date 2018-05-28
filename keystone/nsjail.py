@@ -15,20 +15,40 @@ import os
 import subprocess
 from overlay import Overlay
 
+GROUPADD_COMMAND = 'groupadd'
+USERADD_COMMAND = 'useradd'
+
 
 def create_user(user_id, group_id):
+  """Creates the NsJail user ID and group ID.
+
+  Args:
+    user_id: An integer with the user ID to run the build process under.
+    group_id: An integer with the group ID to run the build process under.
+
+  Returns:
+    A list of commands executed. Each command is a list of strings.
+  """
+  executed_commands = []
   name = 'android-build'
-  subprocess.check_call([
-      'groupadd', name,
+  command = [
+      GROUPADD_COMMAND, name,
       '--gid', str(group_id)
-  ])
-  subprocess.check_call([
-      'useradd',
+  ]
+  subprocess.check_call(command)
+  executed_commands.append(command)
+
+  command = [
+      USERADD_COMMAND,
       '--gid', name,
       '--groups', 'sudo',
       '--uid', str(user_id),
       '--create-home', name
-  ])
+  ]
+  subprocess.check_call(command)
+  executed_commands.append(command)
+
+  return executed_commands
 
 
 def run(nsjail_bin,
@@ -36,9 +56,9 @@ def run(nsjail_bin,
         source_dir,
         command,
         android_target,
-        dist_dir,
-        build_id,
-        max_cpus,
+        dist_dir=None,
+        build_id=None,
+        max_cpus=None,
         user_id=None,
         group_id=None):
   """Run inside an NsJail sandbox.
@@ -55,9 +75,15 @@ def run(nsjail_bin,
     max_cpus: An integer with maximum number of CPUs.
     user_id: An integer with the user ID to run the build process under.
     group_id: An integer with the group ID to run the build process under.
+
+  Returns:
+    A list of commands that were executed. Each command is a list of strings.
   """
+  executed_commands = []
+
   if user_id and group_id:
-    create_user(user_id, group_id)
+    commands = create_user(user_id, group_id)
+    executed_commands.extend(commands)
     os.setgid(group_id)
     os.setuid(user_id)
 
@@ -91,10 +117,13 @@ def run(nsjail_bin,
 
   print('NsJail command:')
   print(' '.join(nsjail_command))
-  subprocess.call(nsjail_command)
+  subprocess.check_call(nsjail_command)
+  executed_commands.append(nsjail_command)
 
   # Strip out overlay
   del overlay
+
+  return executed_commands
 
 
 def main():
