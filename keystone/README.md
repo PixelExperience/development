@@ -63,12 +63,8 @@ sets within the same source tree. This is implemented in overlay.py.
 
 ## Testing
 
-To run a test follow the instructions below
+To run a test just execute it in python like so:
 
 ```
-python -m virtualenv env
-source env/bin/activate
-pip install mock
-# Now run any test module. For example:
 python overlay_test.py
 ```

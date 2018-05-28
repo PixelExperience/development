@@ -39,6 +39,22 @@ import subprocess
 import tempfile
 
 
+class Mount(object):
+  """Manages a filesystem mount.
+  """
+
+  def __init__(self, mount_command, unmount_command):
+    self.mount_command = None
+    self.unmount_command = None
+    subprocess.check_call(mount_command)
+    self.mount_command = mount_command
+    self.unmount_command = unmount_command
+
+  def __del__(self):
+    if self.unmount_command:
+      subprocess.check_call(self.unmount_command)
+
+
 class Overlay(object):
   """Manages filesystem overlays of Android source tree.
   """
@@ -91,39 +107,37 @@ class Overlay(object):
     mount_options += 'upperdir=%s,' % upperdir
     mount_options += 'workdir=%s' % workdir
 
-    command = [
+    mount_command = [
         'sudo', 'mount',
         '--types', 'overlay',
         '--options', mount_options,
         'overlay',
         source_dir
     ]
-    subprocess.check_call(command)
-    # Only save the source directories after
-    # we have succesfully applied the overlay to avoid
-    # attempting an unmount if the mount failed.
-    self._source_dir = source_dir
-    self._overlay_dir = overlay_dir
-    print('Applied overlay ' + self._overlay_dir)
+    unmount_command = ['sudo', 'umount', source_dir]
+    self._AddMount(mount_command, unmount_command)
 
-  def _UnmountAll(self):
-    """Unmounts everything mounted by this class.
+  def _AddMount(self, mount_command, unmount_command):
+    mount = Mount(
+        mount_command=mount_command,
+        unmount_command=unmount_command)
+    self._mounts.append(mount)
+
+  def GetMountInfo(self):
+    """Gets details on the filesystem devices mounted.
+
+    Returns:
+      A list of dicts. Each dict entry represents a device mounted
+      with the following fields:
+        mount_command: A list of strings with the command that was
+          used for mounting.
+        unmount_command: A list of strings with the command that will
+          be used for unmounting.
     """
-    if self._out_dir:
-      subprocess.check_call([
-          'sudo', 'umount', os.path.abspath(self._out_dir)
-      ])
-    if self.original_out_dir:
-      subprocess.check_call([
-          'sudo', 'umount', os.path.abspath(self.original_out_dir)
-      ])
-      os.rmdir(self.original_out_dir)
-    if self._source_dir:
-      subprocess.check_call([
-          'sudo', 'umount', os.path.abspath(self._source_dir)
-      ])
-    if self._overlay_dir:
-      print('Stripped out overlay ' + self._overlay_dir)
+    mount_info = [{'mount_command': mount.mount_command,
+                   'unmount_command': mount.unmount_command}
+                  for mount in self._mounts]
+    return mount_info
 
   def __init__(self, target, source_dir):
     """Inits Overlay with the details of what is going to be overlaid.
@@ -132,10 +146,8 @@ class Overlay(object):
       target: A string with the name of the target to be prepared.
       source_dir: A string with the path to the Android platform source.
     """
-    self._source_dir = None
     self._overlay_dir = None
-    self._out_dir = None
-    self.original_out_dir = None
+    self._mounts = []
     branch = self.BRANCH_MAP[target]
     overlay_dir = os.path.join(source_dir, 'overlays', branch)
 
@@ -150,12 +162,13 @@ class Overlay(object):
     out_dir = os.path.join(source_dir, 'out')
     if not os.path.exists(out_dir):
       os.mkdir(out_dir)
-    self.original_out_dir = tempfile.mkdtemp()
-    subprocess.check_call([
-        'sudo', 'mount', '--bind', out_dir, self.original_out_dir
-    ])
+    original_out_dir = tempfile.mkdtemp()
+    self._AddMount(['sudo', 'mount', '--bind', out_dir, original_out_dir],
+                   ['sudo', 'umount', original_out_dir])
 
     self._MountOverlay(source_dir, overlay_dir, target)
+    self._overlay_dir = overlay_dir
+    print('Applied overlay ' + self._overlay_dir)
 
     # Now that we've applied an overlay any files written
     # under the repo workspace root directory will be redirected
@@ -169,12 +182,11 @@ class Overlay(object):
     # back to out and that will take precedence over the
     # overlay filesystem.
 
-    subprocess.check_call([
-        'sudo', 'mount', '--bind', self.original_out_dir, out_dir
-    ])
-    self._out_dir = out_dir
+    self._AddMount(['sudo', 'mount', '--bind', original_out_dir, out_dir],
+                   ['sudo', 'umount', out_dir])
 
   def __del__(self):
     """Cleans up Overlay.
     """
-    self._UnmountAll()
+    if self._overlay_dir:
+      print('Stripped out overlay ' + self._overlay_dir)
