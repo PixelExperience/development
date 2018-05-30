@@ -58,17 +58,16 @@ class Mount(object):
 class Overlay(object):
   """Manages filesystem overlays of Android source tree.
   """
-  # TODO(diegowilson): Add gms overlay
-  BRANCH_MAP = {
-      'sdm845': 'qcom-LA.UM.7.3-incoming',
-      'sdm660_64': 'qcom-LA.UM.7.2-incoming',
+  OVERLAY_MAP = {
+      'sdm845': ['qcom-LA.UM.7.3-incoming', 'gms'],
+      'sdm660_64': ['qcom-LA.UM.7.2-incoming', 'gms'],
   }
 
-  def _MountOverlay(self, source_dir, overlay_dir, target):
+  def _MountOverlay(self, source_dir, overlay_dirs, target):
     """Mounts the selected overlay directory.
 
     OverlayFS creates a merge directory composed of a union
-    of source_dir and the overlay_dir. Then source_dir is replaced
+    of source_dir and the overlay_dirs. Then source_dir is replaced
     by the resulting merge directory.
 
     OverlayFS also needs two new directories: upperdir and workdir.
@@ -81,14 +80,13 @@ class Overlay(object):
 
     Args:
       source_dir: A string with the path to the Android platform source.
-      overlay_dir: A string with the path to the overlay directory to
-        apply.
+      overlay_dirs: A list of strings with the paths to the overlay
+        directory to apply.
       target: A string with the name of the target to be prepared.
     """
-    lowerdirs = [
-        overlay_dir,
-        source_dir,
-    ]
+    lowerdirs = overlay_dirs
+    lowerdirs.append(source_dir)
+
     overlay_out_dir = os.path.join(source_dir, 'out', 'overlays')
     target_out_dir = os.path.join(overlay_out_dir, target)
     workdir = os.path.join(target_out_dir, 'work')
@@ -146,17 +144,8 @@ class Overlay(object):
       target: A string with the name of the target to be prepared.
       source_dir: A string with the path to the Android platform source.
     """
-    self._overlay_dir = None
+    self._overlay_dirs = None
     self._mounts = []
-    branch = self.BRANCH_MAP[target]
-    overlay_dir = os.path.join(source_dir, 'overlays', branch)
-
-    # Create an empty overlays file to white out overlays dir.
-    # Otherwise the build system will try to detect all
-    # the Android.bp and Android.mk modules under the overlays
-    # dir and conflict with the ovelays applied at the top.
-    overlay_whiteout = os.path.join(overlay_dir, 'overlays')
-    open(overlay_whiteout, 'a').close()
 
     # Save a reference to the workspace out directory
     out_dir = os.path.join(source_dir, 'out')
@@ -166,9 +155,21 @@ class Overlay(object):
     self._AddMount(['sudo', 'mount', '--bind', out_dir, original_out_dir],
                    ['sudo', 'umount', original_out_dir])
 
-    self._MountOverlay(source_dir, overlay_dir, target)
-    self._overlay_dir = overlay_dir
-    print('Applied overlay ' + self._overlay_dir)
+    overlay_dirs = []
+    for overlay_dir in self.OVERLAY_MAP[target]:
+      overlay_dir = os.path.join(source_dir, 'overlays', overlay_dir)
+
+      # Create an empty overlays file to white out overlays dir.
+      # Otherwise the build system will try to detect all
+      # the Android.bp and Android.mk modules under the overlays
+      # dir and conflict with the ovelays applied at the top.
+      overlay_whiteout = os.path.join(overlay_dir, 'overlays')
+      open(overlay_whiteout, 'a').close()
+      overlay_dirs.append(overlay_dir)
+
+    self._MountOverlay(source_dir, overlay_dirs, target)
+    self._overlay_dirs = overlay_dirs
+    print('Applied overlays ' + ' '.join(self._overlay_dirs))
 
     # Now that we've applied an overlay any files written
     # under the repo workspace root directory will be redirected
@@ -188,5 +189,5 @@ class Overlay(object):
   def __del__(self):
     """Cleans up Overlay.
     """
-    if self._overlay_dir:
-      print('Stripped out overlay ' + self._overlay_dir)
+    if self._overlay_dirs:
+      print('Stripped out overlay ' + ' '.join(self._overlay_dirs))
