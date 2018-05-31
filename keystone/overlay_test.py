@@ -65,7 +65,7 @@ class OverlayTest(unittest.TestCase):
 
   def testCreateFromValidTarget(self):
     o = overlay.Overlay(
-        target='sdm845',
+        target='sdm845_gms',
         source_dir=self.source_dir)
     self.assertIsNotNone(o)
     mounts = o.GetMountInfo()
@@ -76,8 +76,8 @@ class OverlayTest(unittest.TestCase):
             '--types', 'overlay',
             '--options',
             'lowerdir=%s/overlays/qcom-LA.UM.7.3-incoming:%s/overlays/gms:%s,'
-            'upperdir=%s/out/overlays/sdm845/artifacts,'
-            'workdir=%s/out/overlays/sdm845/work'
+            'upperdir=%s/out/overlays/sdm845_gms/artifacts,'
+            'workdir=%s/out/overlays/sdm845_gms/work'
             % (self.source_dir, self.source_dir, self.source_dir,
                self.source_dir, self.source_dir),
             'overlay',
