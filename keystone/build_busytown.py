@@ -10,28 +10,33 @@ import os
 import nsjail
 
 
-def build(android_target, nsjail_bin, chroot, dist_dir, build_id, max_cpus):
+def build(android_target, variant, nsjail_bin, chroot, dist_dir, build_id,
+          max_cpus):
   """Builds an Android target on a Busytown build host.
 
   Args:
     android_target: A string with the name of the android target to build.
+    variant: A string with the build variant.
     nsjail_bin: A string with the path to the nsjail binary.
     chroot: A string with the path to the chroot of the
       NsJail sandbox.
     dist_dir: A string with the path to the Android dist directory.
     build_id: A string with the Android build identifier.
     max_cpus: An integer with maximum number of CPUs.
+
+  Returns:
+    A list of commands that were executed. Each command is a list of strings.
   """
   # All busytown builds run with the root of the
   # Android source tree as the current directory.
   source_dir = os.getcwd()
   command = [
       '/src/development/keystone/build_keystone.sh',
-      android_target + '-userdebug',
+      '%s-%s' % (android_target, variant),
       '/src',
       'make', '-j', 'droid', 'showcommands', 'dist', 'platform_tests'
   ]
-  nsjail.run(
+  return nsjail.run(
       nsjail_bin=nsjail_bin,
       chroot=chroot,
       source_dir=source_dir,
@@ -83,6 +88,6 @@ def parse_args():
   return vars(parser.parse_args())
 
 
-def build_target(android_target):
+def build_target(android_target, variant):
   args = parse_args()
-  build(android_target=android_target, **args)
+  build(android_target, variant, **args)

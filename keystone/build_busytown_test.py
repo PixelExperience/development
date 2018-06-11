@@ -4,38 +4,80 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import os
 import unittest
 import build_busytown
-import mock
 
 
 class BuildBusytownTest(unittest.TestCase):
 
-  @mock.patch('build_busytown.os.getcwd', return_value='/source_dir')
-  @mock.patch('build_busytown.nsjail.run')
-  def testBasic(self, mock_nsjail_run, mock_getcwd):
-    del mock_getcwd
-    build_busytown.build(
-        android_target='target_name',
-        nsjail_bin='/bin/nsjail_bin',
+  def testBasic(self):
+    build_busytown.nsjail.__file__ = '/'
+    os.chdir('/')
+    commands = build_busytown.build(
+        'target_name',
+        'userdebug',
+        nsjail_bin='/bin/true',
         chroot='/chroot',
         dist_dir='/dist_dir',
         build_id='0',
         max_cpus=1)
-    mock_nsjail_run.assert_called_with(
-        android_target='target_name',
-        build_id='0',
+
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--bindmount', '/dist_dir:/dist',
+                '--env', 'DIST_DIR=/dist',
+                '--env', 'BUILD_NUMBER=0',
+                '--max_cpus=1',
+                '--',
+                '/src/development/keystone/build_keystone.sh',
+                'target_name-userdebug',
+                '/src',
+                'make', '-j', 'droid', 'showcommands', 'dist', 'platform_tests'
+            ]
+        ]
+    )
+
+  def testUser(self):
+    build_busytown.nsjail.__file__ = '/'
+    os.chdir('/')
+    commands = build_busytown.build(
+        'target_name',
+        'user',
+        nsjail_bin='/bin/true',
         chroot='/chroot',
-        command=[
-            '/src/development/keystone/build_keystone.sh',
-            'target_name-userdebug',
-            '/src',
-            'make', '-j', 'droid', 'showcommands', 'dist', 'platform_tests'
-        ],
         dist_dir='/dist_dir',
-        max_cpus=1,
-        nsjail_bin='/bin/nsjail_bin',
-        source_dir='/source_dir')
+        build_id='0',
+        max_cpus=1)
+
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--bindmount', '/dist_dir:/dist',
+                '--env', 'DIST_DIR=/dist',
+                '--env', 'BUILD_NUMBER=0',
+                '--max_cpus=1',
+                '--',
+                '/src/development/keystone/build_keystone.sh',
+                'target_name-user',
+                '/src',
+                'make', '-j', 'droid', 'showcommands', 'dist', 'platform_tests'
+            ]
+        ]
+    )
 
 
 if __name__ == '__main__':

@@ -3,4 +3,4 @@
 
 import build_busytown
 
-build_busytown.build_target('sdm845', 'userdebug')
+build_busytown.build_target('sdm845', 'user')

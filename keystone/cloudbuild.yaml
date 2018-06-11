@@ -1,0 +1,14 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/google.com/android-keystone-182020/android-build', '.']
+- name: 'gcr.io/google.com/android-keystone-182020/android-build'
+  args: ['python', 'dockerfile_test.py']
+  volumes:
+  - name: 'src'
+    path: '/src'
+- name: 'gcr.io/google.com/android-keystone-182020/android-build'
+  args: ['ls']
+  volumes:
+  - name: 'src'
+    path: '/src'
+images: ['gcr.io/google.com/android-keystone-182020/android-build']
