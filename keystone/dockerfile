@@ -76,6 +76,11 @@ RUN git clone --depth=1 --branch 2.6 https://github.com/google/nsjail.git
 
 RUN make --directory=/nsjail && mv /nsjail/nsjail /bin && rm -rf -- /nsjail
 
+# This COPY command almost vestigial. Nsjail now gets its configuration from
+# the mounted source tree (which means we can change the jail configuration
+# without having to regen the docker image). However, there may still be some
+# branches that depend on injecting the config into the container, so we can't
+# delete this line yet.
 COPY nsjail.cfg /usr/share/android-build.cfg
 
 RUN chmod a+r /usr/share/android-build.cfg
