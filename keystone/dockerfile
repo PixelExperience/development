@@ -47,9 +47,12 @@ RUN ln --symbolic /usr/bin/python2.7 /usr/bin/python2
 # Required to build OTA package:
 #   openssl for /usr/bin/openssl
 #   bsdmainutils for /usr/bin/hexdump
+# Required to build msm8937_32go:
+#   genisoimage for /usr/bin/mkisofs
 RUN apt-get install -y \
   bc \
   bsdmainutils \
+  genisoimage \
   libssl-dev \
   libxml-simple-perl \
   openssl
@@ -68,7 +71,8 @@ RUN apt-get install -y \
     pkg-config \
     protobuf-compiler
 
-RUN git clone --depth=1 https://github.com/google/nsjail.git
+# TODO(b/110372063): revert to master when bug fixed.
+RUN git clone --depth=1 --branch 2.6 https://github.com/google/nsjail.git
 
 RUN make --directory=/nsjail && mv /nsjail/nsjail /bin && rm -rf -- /nsjail
 
