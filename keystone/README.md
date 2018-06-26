@@ -22,7 +22,6 @@ Most developers just need to do the following:
 
 ```
 python development/keystone/container.py
-export PATH
 source build/envsetup.sh
 lunch sdm845-userdebug
 make -j
@@ -32,7 +31,6 @@ If you would like to build a target other than the default target then:
 
 ```
 python development/keystone/container.py --android_target sdm660_64
-export PATH
 source build/envsetup.sh
 lunch sdm660_64-userdebug
 make -j

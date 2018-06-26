@@ -21,7 +21,6 @@ if [[ -z "${BUILD_COMMAND}" ]]; then
   exit 1
 fi
 
-export PATH
 source build/envsetup.sh
 lunch "$ANDROID_TARGET"
 cd "$BUILD_DIR"
