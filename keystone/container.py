@@ -11,7 +11,7 @@ import subprocess
 _IMAGE = 'android-build'
 
 
-def run(container_command, android_target, docker_bin, meta_dir):
+def run(container_command, android_target, docker_bin, meta_dir, ccache_dir):
   """Runs a command in an Android Build container.
 
   Args:
@@ -21,6 +21,7 @@ def run(container_command, android_target, docker_bin, meta_dir):
       inside the container.
     docker_bin: A string that invokes docker.
     meta_dir: An optional path to a folder containing the META build.
+    ccache_dir: A path to a directory to mount as /ccache.
 
   Returns:
     A list of strings with the command executed.
@@ -32,6 +33,10 @@ def run(container_command, android_target, docker_bin, meta_dir):
   if meta_dir:
     docker_command.extend([
         '--mount', 'type=bind,source=%s,target=/meta,readonly' % meta_dir
+    ])
+  if ccache_dir:
+    docker_command.extend([
+        '--mount', 'type=bind,source=%s,target=/ccache' % ccache_dir
     ])
   docker_command.extend([
       '--rm',
@@ -46,6 +51,8 @@ def run(container_command, android_target, docker_bin, meta_dir):
       '--user_id', str(os.getuid()),
       '--group_id', str(os.getgid())
   ])
+  if ccache_dir:
+    docker_command.extend(['--ccache_dir', '/ccache'])
   docker_command.extend(['--command', container_command])
 
   subprocess.check_call(docker_command)
@@ -75,11 +82,16 @@ def main():
       '--meta_dir',
       default='',
       help='Full path to META folder. Default to \'\'')
+  parser.add_argument(
+      '--ccache_dir',
+      default='',
+      help="(Optional) If specified, a CCache directory to expose to the container.")
   args = parser.parse_args()
   run(container_command=args.container_command,
       android_target=args.android_target,
       docker_bin=args.docker_bin,
-      meta_dir=args.meta_dir)
+      meta_dir=args.meta_dir,
+      ccache_dir=args.ccache_dir)
 
 
 if __name__ == '__main__':

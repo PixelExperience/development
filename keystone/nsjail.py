@@ -60,7 +60,8 @@ def run(nsjail_bin,
         build_id=None,
         max_cpus=None,
         user_id=None,
-        group_id=None):
+        group_id=None,
+        ccache_dir=None):
   """Run inside an NsJail sandbox.
 
   Args:
@@ -75,6 +76,7 @@ def run(nsjail_bin,
     max_cpus: An integer with maximum number of CPUs.
     user_id: An integer with the user ID to run the build process under.
     group_id: An integer with the group ID to run the build process under.
+    ccache_dir: A string with the path to the CCache dir.
 
   Returns:
     A list of commands that were executed. Each command is a list of strings.
@@ -111,6 +113,12 @@ def run(nsjail_bin,
     nsjail_command.extend(['--env', 'BUILD_NUMBER=%s' % build_id])
   if max_cpus:
     nsjail_command.append('--max_cpus=%i' % max_cpus)
+  if ccache_dir:
+    nsjail_command.extend([
+        '--bindmount', ccache_dir + ':/ccache',
+        '--env', 'USE_CCACHE=1',
+        '--env', 'CCACHE_DIR=/ccache'
+    ])
 
   nsjail_command.append('--')
   nsjail_command.extend(command)
@@ -175,6 +183,10 @@ def main():
       type=int,
       help='Limit of concurrent CPU cores that the NsJail sanbox'
       'can use. Defaults to unlimited.')
+  parser.add_argument(
+      '--ccache_dir',
+      default='',
+      help="(Optional) If specified, specifies a CCache directory to bind to this jail")
   args = parser.parse_args()
   run(chroot=args.chroot,
       nsjail_bin=args.nsjail_bin,
@@ -185,7 +197,8 @@ def main():
       build_id=args.build_id,
       user_id=args.user_id,
       group_id=args.group_id,
-      max_cpus=args.max_cpus)
+      max_cpus=args.max_cpus,
+      ccache_dir=args.ccache_dir)
 
 
 if __name__ == '__main__':

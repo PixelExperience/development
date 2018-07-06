@@ -153,6 +153,31 @@ class NsjailTest(unittest.TestCase):
         ]
     )
 
+  def testCCacheDir(self):
+    commands = nsjail.run(
+        nsjail_bin='/bin/true',
+        chroot='/chroot',
+        source_dir='/source_dir',
+        command=['/bin/bash'],
+        android_target='target_name',
+        ccache_dir='/ccache/dir')
+    self.assertEqual(
+        commands,
+        [
+            [
+                '/bin/true',
+                '--bindmount', '/source_dir:/src',
+                '--chroot', '/chroot',
+                '--env', 'USER=android-build',
+                '--config', '/nsjail.cfg',
+                '--bindmount', '/ccache/dir:/ccache',
+                '--env', 'USE_CCACHE=1',
+                '--env', 'CCACHE_DIR=/ccache',
+                '--', '/bin/bash'
+            ]
+        ]
+    )
+
 
 if __name__ == '__main__':
   unittest.main()
