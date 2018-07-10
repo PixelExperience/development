@@ -71,8 +71,7 @@ RUN apt-get install -y \
     pkg-config \
     protobuf-compiler
 
-# TODO(b/110372063): revert to master when bug fixed.
-RUN git clone --depth=1 --branch 2.6 https://github.com/google/nsjail.git
+RUN git clone --depth=1 https://github.com/google/nsjail.git
 
 RUN make --directory=/nsjail && mv /nsjail/nsjail /bin && rm -rf -- /nsjail
 
