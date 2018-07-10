@@ -38,29 +38,6 @@ lunch sdm660_64-userdebug
 make -j
 ```
 
-During developer builds, CCache can be deployed to improve build times of
-iterative and/or similar builds. To enable CCache:
-
-```
-# [First time only] Create a CCache directory on the host system
-mkdir -p /path/to/ccache
-
-# Start a container with the CCache directory mounted and appropriate
-# environment variables set
-python development/keystone/container.py --ccache_dir=/path/to/ccache
-
-# [First time only] Initialize CCache
-ccache -M 100G
-```
-
-In one test with a hot cache (i.e. the same source built again, but not
-incrementally), build time was reduced from ~118 mins to ~50 mins.
-
-As of the time of writing, a single build produces ~25GB of artifacts, so the
-CCache should be set to at least 25G. Also, the version of CCache within the
-container image is significantly older than that in the standard gLinux image,
-and so the `ccache -M` command should be executed within the container.
-
 ## Busytown builds
 
 Busytown builds (aka go/ab) invoke the ```build_busytown_*.py``` scripts contained
