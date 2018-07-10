@@ -1,33 +1,7 @@
 """Mounts all the projects required by a selected Android target.
 
-The repo workspace is required to have the following structure:
-
-Root directory
-Location: ${ANDROID_BUILD_TOP}
-All projects in the root directory that are not in the overlays
-directory are shared among all Android targets.
-
-Overlays directory
-Location: ${ANDROID_BUILD_TOP}/overlays
-Contains target specific projects. Each subdirectory under the overlays
-directory can be mounted at the root directory to support different targets.
-For example: the sdm845 Android target requires all the projects at
-the root directory and the projects at
-${ANDROID_BUILD_TOP}/overlays/qcom-LA.UM.7.3-incoming.
-
-Build out directory
-Location: ${ANDROID_BUILD_TOP}/out
-Contains all files generated during a build. This includes the target files
-like system.img and host tools like adb.
-
-Overlay build directory
-Location: ${ANDROID_BUILD_TOP}/out/overlays
-Contains all files written to any location in the workspace other than
-build out directory.  Most notably, some modules incorrectly attempt to
-write files directly to a source directory. The overlay filesystem
-redirects all attempts to write to the source directory to the overlay
-build directory.
-
+For details on how vendor overlays work see the vendor overlays
+section of the README.md.
 """
 
 from __future__ import absolute_import
