@@ -36,6 +36,7 @@ class Overlay(object):
       'sdm845': ['qcom-LA.UM.7.3-incoming', 'keystone'],
       'sdm845_gms': ['qcom-LA.UM.7.3-incoming', 'gms', 'keystone'],
       'sdm660_64': ['qcom-LA.UM.7.2-incoming', 'keystone'],
+      'cuttlestone': ['keystone'],
   }
 
   def _MountOverlay(self, source_dir, overlay_dirs, target):
