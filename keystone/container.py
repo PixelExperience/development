@@ -6,6 +6,7 @@ from __future__ import print_function
 
 import argparse
 import os
+import overlay
 import subprocess
 
 _IMAGE = 'android-build'
@@ -64,9 +65,10 @@ def main():
       'Defaults to /bin/bash.')
   parser.add_argument(
       '--android_target',
-      default='sdm845',
+      choices=overlay.Overlay.OVERLAY_MAP.keys(),
+      default=overlay.Overlay.OVERLAY_MAP.keys()[0],
       help='Android target for building inside container. '
-      'Defaults to sdm845.')
+      'Defaults to %s.' % overlay.Overlay.OVERLAY_MAP.keys()[0])
   parser.add_argument(
       '--docker_bin',
       default='docker',
