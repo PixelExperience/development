@@ -33,9 +33,10 @@ class Overlay(object):
   """Manages filesystem overlays of Android source tree.
   """
   OVERLAY_MAP = {
-      'sdm845': ['qcom-LA.UM.7.3-incoming'],
-      'sdm845_gms': ['qcom-LA.UM.7.3-incoming', 'gms'],
-      'sdm660_64': ['qcom-LA.UM.7.2-incoming'],
+      'sdm845': ['qcom-LA.UM.7.3-incoming', 'keystone'],
+      'sdm845_gms': ['qcom-LA.UM.7.3-incoming', 'gms', 'keystone'],
+      'sdm660_64': ['qcom-LA.UM.7.2-incoming', 'keystone'],
+      'cuttlestone': ['keystone'],
   }
 
   def _MountOverlay(self, source_dir, overlay_dirs, target):

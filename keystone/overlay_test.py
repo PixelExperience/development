@@ -59,6 +59,8 @@ class OverlayTest(unittest.TestCase):
                           'overlays', 'qcom-LA.UM.7.3-incoming'))
     os.mkdir(os.path.join(self.source_dir,
                           'overlays', 'gms'))
+    os.mkdir(os.path.join(self.source_dir,
+                          'overlays', 'keystone'))
 
   def tearDown(self):
     shutil.rmtree(self.source_dir)
@@ -75,11 +77,11 @@ class OverlayTest(unittest.TestCase):
             'sudo', 'mount',
             '--types', 'overlay',
             '--options',
-            'lowerdir=%s/overlays/qcom-LA.UM.7.3-incoming:%s/overlays/gms:%s,'
+            'lowerdir=%s/overlays/qcom-LA.UM.7.3-incoming:%s/overlays/gms:%s/overlays/keystone:%s,'
             'upperdir=%s/out/overlays/sdm845_gms/artifacts,'
             'workdir=%s/out/overlays/sdm845_gms/work'
             % (self.source_dir, self.source_dir, self.source_dir,
-               self.source_dir, self.source_dir),
+               self.source_dir, self.source_dir, self.source_dir),
             'overlay',
             self.source_dir
         ],
