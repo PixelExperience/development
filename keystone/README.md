@@ -47,7 +47,7 @@ Instead they provide a chroot with all the Android build host dependencies.
 ## Docker container builds
 
 Google platform engineers build inside a docker container. The container.py
-script in this directory sets up such container. The dockerfile for the
+script in this directory sets up this container. The dockerfile for the
 container is also provided.
 
 ## NsJail sandbox
@@ -62,8 +62,8 @@ Downstream consumers of the Android platform often create independent Android
 branches for each device.
 
 We can unify the development of all devices from the same SoC family with the help
-of filesystem overlays and specifically with OverlayFS. Here we shall focus on OverayFS
-at a high level. See the 
+of filesystem overlays. Specifically, we can use OverlayFS. Here we shall focus
+on OverayFS at a high level. See the 
 [documentation on kernel.org](https://www.kernel.org/doc/Documentation/filesystems/overlayfs.txt)
 for details on how OverlayFS works.
 
@@ -71,8 +71,8 @@ With OverlayFS we're able to dynamically select the set of projects
 we want to build. This makes it possible to keep sets of
 target specific projects while sharing common platform projects.
 
-For example, if we had two devices: Device A and Device B the vendor overlays
-would create the following build time views.
+For example, let's say we had two devices: Device A and Device B.
+The vendor overlays would create the following build time views.
 
 ```
 +-------------------------------+ +--------------------------------------------+
@@ -97,7 +97,8 @@ would create the following build time views.
 +-------------------------------+
 ```
 
-The Android repo workspace is required to have a structure as follows.
+To support vendor overlays the Android repo workspace is required to the
+following structure.
 
 ### Root directory
 
@@ -120,7 +121,7 @@ ${ANDROID_BUILD_TOP}/overlays/qcom-LA.UM.7.3-incoming.
 
 Location: ${ANDROID_BUILD_TOP}/out
 
-Contains all files generated during a build. This includes the target files
+Contains all files generated during a build. This includes target files
 like system.img and host tools like adb.
 
 ### Overlay build directory
@@ -128,7 +129,7 @@ like system.img and host tools like adb.
 Location: ${ANDROID_BUILD_TOP}/out/overlays
 
 Contains all files written to any location in the workspace other than
-build out directory.  Most notably, some modules incorrectly attempt to
+the build out directory.  Most notably, some modules incorrectly attempt to
 write files directly to a source directory. The overlay filesystem
 redirects all attempts to write to the source directory to the overlay
 build directory.
