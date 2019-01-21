@@ -299,9 +299,13 @@ public class Monkey {
                 try {
                     final ResolveInfo resolveInfo =
                             mPm.resolveIntent(intent, intent.getType(), 0, UserHandle.myUserId());
-                    final String launcherPackage = resolveInfo.activityInfo.packageName;
-                    if (pkg.equals(launcherPackage)) {
-                        return true;
+                    if (resolveInfo != null) {
+                        final String launcherPackage = resolveInfo.activityInfo.packageName;
+                        if (pkg.equals(launcherPackage)) {
+                            return true;
+                        }
+                    } else {
+                        return false;
                     }
                 } catch (RemoteException e) {
                     Logger.err.println("** Failed talking with package manager!");
