@@ -176,6 +176,9 @@ public class Monkey {
     /** Generate hprof reports before/after monkey runs */
     private boolean mGenerateHprof;
 
+    /** Disable all the logs from monkey */
+    private boolean mDisableLogs = false;
+
     /** If set, only match error if this text appears in the description text. */
     private String mMatchDescription;
 
@@ -299,9 +302,13 @@ public class Monkey {
                 try {
                     final ResolveInfo resolveInfo =
                             mPm.resolveIntent(intent, intent.getType(), 0, UserHandle.myUserId());
-                    final String launcherPackage = resolveInfo.activityInfo.packageName;
-                    if (pkg.equals(launcherPackage)) {
-                        return true;
+                    if (resolveInfo != null) {
+                        final String launcherPackage = resolveInfo.activityInfo.packageName;
+                        if (pkg.equals(launcherPackage)) {
+                            return true;
+                        }
+                    } else {
+                        return false;
                     }
                 } catch (RemoteException e) {
                     Logger.err.println("** Failed talking with package manager!");
@@ -478,6 +485,9 @@ public class Monkey {
      * @param command Command line to execute.
      */
     private void commandLineReport(String reportName, String command) {
+        if (mDisableLogs) {
+            return;
+        }
         Logger.err.println(reportName + ":");
         Runtime rt = Runtime.getRuntime();
         Writer logOutput = null;
@@ -897,6 +907,11 @@ public class Monkey {
                 } else if (opt.equals("-h")) {
                     showUsage();
                     return false;
+                } else if (opt.equals("--disable-logs")) {
+                    Logger.err.println("** Monkey: all log disbled!");
+                    mDisableLogs = true;
+                    Logger.stdout = false;
+                    Logger.logcat = false;
                 } else {
                     Logger.err.println("** Error: Unknown option: " + opt);
                     showUsage();
