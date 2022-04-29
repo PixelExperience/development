@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "ce918472_d03e27ed",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000429
+      },
+      "writtenOn": "2022-04-29T22:56:03Z",
+      "side": 1,
+      "message": "Helps with signing in case of provate-builds.\nPrevents `SecretKeyFactory not available` error",
+      "revId": "ae64e7e71b6f565c5522d462e83d7f06ad1be294",
+      "serverId": "8ba0da3e-d57f-4bbe-ac74-faf358ba962a"
+    }
+  ]
+}
